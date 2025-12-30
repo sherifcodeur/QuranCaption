@@ -83,7 +83,12 @@
 					{#if Object.keys(subtitleClip.translations).length > 0}
 						<div class="translations">
 							{#each Object.keys(subtitleClip.translations) as translation}
-								{#if translation.startsWith('type') === false}
+								{@const editionConfig =
+									globalState.getProjectTranslation.addedTranslationEditions.find(
+										(e) => e.name === translation
+									)}
+								<!-- Check if the translation is valid and if 'showInTranslationsEditor' is enabled -->
+								{#if translation.startsWith('type') === false && editionConfig?.showInTranslationsEditor}
 									<div class="translation-item">
 										<span class="lang-code monospaced">{translation.slice(0, 3).toUpperCase()}</span
 										>

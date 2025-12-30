@@ -117,8 +117,11 @@
 	});
 
 	// Liste des éditions de traduction configurées dans le projet (pour backgrounds)
+	// Only include editions that have 'showInTranslationsEditor' enabled
 	let projectTranslationEditionNames = $derived(() => {
-		return globalState.getProjectTranslation.addedTranslationEditions.map((e) => e.name);
+		return globalState.getProjectTranslation.addedTranslationEditions
+			.filter((e) => e.showInTranslationsEditor)
+			.map((e) => e.name);
 	});
 
 	let helperStyles = $derived((target: string) => {
@@ -503,7 +506,12 @@
 						edition
 					]}
 
-					{#if globalState.getVideoStyle.doesTargetStyleExist(edition)}
+					{@const editionObj = globalState.getProjectTranslation.addedTranslationEditions.find(
+						(e) => e.name === edition
+					)}
+
+					<!-- Only display the translation if it exists for this clip AND the 'showInTranslationsEditor' is enabled -->
+					{#if globalState.getVideoStyle.doesTargetStyleExist(edition) && editionObj?.showInTranslationsEditor}
 						<p
 							ondblclick={() => {
 								globalState.getVideoStyle.highlightCategory(

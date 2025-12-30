@@ -131,7 +131,7 @@
 							edition.showInTranslationsEditor = !edition.showInTranslationsEditor;
 						}}
 					>
-						Show in editor
+						Activate Translation
 					</span>
 				</div>
 			</label>
