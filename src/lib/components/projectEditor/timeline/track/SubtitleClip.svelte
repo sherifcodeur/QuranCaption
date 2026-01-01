@@ -106,8 +106,11 @@
 	}
 
 	function clipClicked() {
-		// Sélectionne le clip si on est dans la page de style
-		if (globalState.currentProject!.projectEditorState.currentTab === 'Style') {
+		// Sélectionne le clip si on est dans la page de style ou Video Editor
+		if (
+			globalState.currentProject!.projectEditorState.currentTab === 'Style' ||
+			globalState.currentProject!.projectEditorState.currentTab === 'Video editor'
+		) {
 			globalState.getStylesState.toggleSelection(clip);
 		}
 	}
@@ -139,7 +142,10 @@
 		globalState.getSubtitlesEditorState.editSubtitle?.id === clip.id
 			? ' bg-[#6265af]/50! border-[#6265af]/40! '
 			: '') +
-		(globalState.currentProject!.projectEditorState.currentTab === 'Style' ? 'cursor-pointer' : '')}
+		(globalState.currentProject!.projectEditorState.currentTab === 'Style' ||
+		globalState.currentProject!.projectEditorState.currentTab === 'Video editor'
+			? 'cursor-pointer'
+			: '')}
 	style="width: {clip.getWidth()}px; left: {positionLeft()}px;"
 	transition:slide={{ duration: 500, axis: 'x' }}
 	oncontextmenu={(e) => {
