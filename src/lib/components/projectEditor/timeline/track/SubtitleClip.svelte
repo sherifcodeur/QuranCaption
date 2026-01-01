@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { SubtitleClip, TrackType, ProjectEditorTabs, type AssetClip, type Clip, type Track } from '$lib/classes';
+	import {
+		SubtitleClip,
+		TrackType,
+		ProjectEditorTabs,
+		type AssetClip,
+		type Clip,
+		type Track
+	} from '$lib/classes';
 	import { globalState } from '$lib/runes/main.svelte';
 	import { fade, slide } from 'svelte/transition';
 	import ContextMenu, { Item, Divider, Settings } from 'svelte-contextmenu';
@@ -225,6 +232,14 @@
 	<Item on:click={addSilence}
 		><div class="btn-icon">
 			<span class="material-icons-outlined text-sm mr-1">space_bar</span>Add silence (on the left)
+		</div></Item
+	>
+	<Item
+		on:click={() => {
+			(track as SubtitleTrack).splitSubtitle(clip.id);
+		}}
+		><div class="btn-icon">
+			<span class="material-icons-outlined text-sm mr-1">call_split</span>Split subtitle
 		</div></Item
 	>
 	<Item on:click={removeSubtitle}
