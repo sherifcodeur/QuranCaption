@@ -58,25 +58,24 @@ fn resolve_ffprobe_binary() -> String {
 }
 
 /// Teste si NVENC est réellement disponible en essayant un encodage rapide
-fn test_nvenc_availability(ffmpeg_path: Option<&str>) -> bool {
+fn test_nvenc_availability(ffmpeg_path: Option<&str>) -> (bool, String) {
     let exe = ffmpeg_path.unwrap_or("ffmpeg");
     
-    println!("[nvenc_test] Test de disponibilité NVENC...");
+    println!("[nvenc_test] Test de disponibilité NVENC sur: {}", exe);
     
     // Créer une entrée vidéo de test très courte (1 frame noir)
-    // NVENC nécessite une résolution minimale (généralement 128x128 ou plus)
     let mut cmd = Command::new(exe);
     cmd.args(&[
         "-y",
         "-hide_banner",
-        "-loglevel", "error",
+        // remove loglevel error to see warnings if any
         "-f", "lavfi",
-        "-i", "color=c=black:s=128x128:r=1:d=0.04", // Résolution minimum NVENC, très courte
+        "-i", "color=c=black:s=128x128:r=1:d=0.04", 
         "-c:v", "h264_nvenc",
         "-preset", "fast",
         "-pix_fmt", "yuv420p",
         "-frames:v", "1",
-        "-f", "null", // Sortie nulle pour éviter d'écrire un fichier
+        "-f", "null", 
         "-"
     ]);
     
@@ -85,13 +84,21 @@ fn test_nvenc_availability(ffmpeg_path: Option<&str>) -> bool {
     match cmd.output() {
         Ok(output) => {
             let success = output.status.success();
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string(); // Maybe error is in stdout?
             
+            // On vérifie le code de retour ET le contenu de stderr
             if success {
+                // Double check stderr for critical driver warnings that might not trigger exit code 1 (rare but possible)
+                let stderr_lower = stderr.to_lowercase();
+                if stderr_lower.contains("driver does not support") || stderr_lower.contains("minimum required nvidia driver") {
+                     println!("[nvenc_test] ✗ Succès apparent mais Driver Error détecté: {}", stderr);
+                     return (false, stderr);
+                }
+
                 println!("[nvenc_test] ✓ NVENC disponible et fonctionnel");
-                true
+                (true, String::new())
             } else {
-                // Analyser les erreurs pour distinguer "pas disponible" vs "erreur de config"
                 let stderr_lower = stderr.to_lowercase();
                 
                 if stderr_lower.contains("cannot load nvcuda.dll") || 
@@ -99,20 +106,24 @@ fn test_nvenc_availability(ffmpeg_path: Option<&str>) -> bool {
                    stderr_lower.contains("cuda") ||
                    stderr_lower.contains("driver") {
                     println!("[nvenc_test] ✗ NVENC non disponible (pas de GPU NVIDIA ou drivers manquants)");
-                    false
+                    (false, stderr)
                 } else if stderr_lower.contains("frame dimension") {
-                    // Si c'est juste un problème de dimensions, essayer avec une plus grande résolution
                     println!("[nvenc_test] Retry avec résolution plus grande...");
-                    test_nvenc_with_larger_resolution(ffmpeg_path)
+                    let retry_success = test_nvenc_with_larger_resolution(ffmpeg_path);
+                    if retry_success {
+                         (true, String::new())
+                    } else {
+                         (false, format!("NVENC failed with small resolution: {}", stderr))
+                    }
                 } else {
-                    println!("[nvenc_test] ✗ NVENC erreur: {}", stderr.trim());
-                    false
+                    println!("[nvenc_test] ✗ NVENC erreur (Code: {}): {}", output.status, stderr);
+                    (false, stderr)
                 }
             }
         }
         Err(e) => {
             println!("[nvenc_test] ✗ Erreur lors du test NVENC: {}", e);
-            false
+            (false, e.to_string())
         }
     }
 }
@@ -182,40 +193,65 @@ fn probe_hw_encoders(ffmpeg_path: Option<&str>) -> Vec<String> {
     found
 }
 
-fn choose_best_codec(prefer_hw: bool) -> (String, Vec<String>, HashMap<String, Option<String>>) {
-    let ffmpeg_exe = resolve_ffmpeg_binary();
-    let hw = if prefer_hw {
-        probe_hw_encoders(ffmpeg_exe.as_deref())
-    } else {
-        Vec::new()
-    };
+fn choose_best_codec(prefer_hw: bool) -> (String, Vec<String>, HashMap<String, Option<String>>, String, String) {
+    // Liste des candidats binaires : d'abord le bundled, puis le système.
+    // Cela garantit que pour la majorité des utilisateurs, on utilise notre version contrôlée.
+    // Mais si elle échoue (ex: vieux drivers), on fallback sur la version système si elle existe.
+    let mut candidates = Vec::new();
     
-    if !hw.is_empty() {
-        // Tester spécifiquement NVENC s'il est détecté
-        if hw[0] == "h264_nvenc" {
-            if test_nvenc_availability(ffmpeg_exe.as_deref()) {
-                println!("[codec] Utilisation de NVENC (accélération GPU NVIDIA)");
-                let codec = hw[0].clone();
-                let params = vec!["-pix_fmt".to_string(), "yuv420p".to_string()];
-                let mut extra = HashMap::new();
-                extra.insert("preset".to_string(), Some("fast".to_string()));
-                return (codec, params, extra);
-            } else {
-                println!("[codec] NVENC détecté mais non fonctionnel, fallback vers libx264");
+    if let Some(path) = resolve_ffmpeg_binary() {
+        candidates.push(path);
+    }
+
+    let system_ffmpeg = "ffmpeg".to_string();
+    // On ajoute "ffmpeg" système comme option de secours
+    // (Note: on ne fait pas de dédoublonnage sophistiqué ici, car "ffmpeg" vs "C:\path\ffmpeg.exe" sont différents)
+    candidates.push(system_ffmpeg);
+
+    let mut first_error = String::new();
+    let mut first_ffmpeg = String::new();
+
+    if prefer_hw {
+        for (i, exe) in candidates.iter().enumerate() {
+            println!("[codec] Test du candidat #{}: {}", i + 1, exe);
+            let hw_encoders = probe_hw_encoders(Some(exe));
+            
+            if !hw_encoders.is_empty() {
+                if hw_encoders[0] == "h264_nvenc" {
+                    let (is_available, error_msg) = test_nvenc_availability(Some(exe));
+                    if is_available {
+                        println!("[codec] ✓ NVENC validé sur {}", exe);
+                        let codec = hw_encoders[0].clone();
+                        let params = vec!["-pix_fmt".to_string(), "yuv420p".to_string()];
+                        let mut extra = HashMap::new();
+                        extra.insert("preset".to_string(), Some("fast".to_string()));
+                        return (codec, params, extra, String::new(), exe.clone());
+                    } else {
+                        println!("[codec] ✗ NVENC échoué sur {}: {}", exe, error_msg);
+                        if first_error.is_empty() {
+                            first_error = error_msg;
+                            first_ffmpeg = exe.clone();
+                        }
+                    }
+                } else {
+                    // QSV ou AMF (pas de test spécifique pour l'instant, on suppose que ça marche)
+                    println!("[codec] Utilisation de l'encodeur hardware (sans test approfondi): {} sur {}", hw_encoders[0], exe);
+                    let codec = hw_encoders[0].clone();
+                    let params = vec!["-pix_fmt".to_string(), "yuv420p".to_string()];
+                    let mut extra = HashMap::new();
+                    extra.insert("preset".to_string(), None);
+                    return (codec, params, extra, String::new(), exe.clone());
+                }
             }
-        } else {
-            // Pour les autres encodeurs hardware (QSV, AMF), utiliser directement
-            println!("[codec] Utilisation de l'encodeur hardware: {}", hw[0]);
-            let codec = hw[0].clone();
-            let params = vec!["-pix_fmt".to_string(), "yuv420p".to_string()];
-            let mut extra = HashMap::new();
-            extra.insert("preset".to_string(), None);
-            return (codec, params, extra);
         }
     }
     
-    // Fallback libx264
-    println!("[codec] Utilisation de libx264 (encodage logiciel)");
+    // Si on arrive ici, soit prefer_hw est false, soit aucun candidat n'a marché pour le HW.
+    // On fallback sur le premier candidat (généralement le bundled) en software
+    let final_exe = if !candidates.is_empty() { candidates[0].clone() } else { "ffmpeg".to_string() };
+    
+    println!("[codec] Fallback total vers libx264 (encodage logiciel) sur {}", final_exe);
+    
     let codec = "libx264".to_string();
     let params = vec![
         "-pix_fmt".to_string(), "yuv420p".to_string(),
@@ -226,11 +262,11 @@ fn choose_best_codec(prefer_hw: bool) -> (String, Vec<String>, HashMap<String, O
     let mut extra = HashMap::new();
     extra.insert("preset".to_string(), Some("ultrafast".to_string()));
     
-    (codec, params, extra)
+    (codec, params, extra, first_error, first_ffmpeg)
 }
 
 fn ffmpeg_preprocess_video(src: &str, dst: &str, w: i32, h: i32, fps: i32, prefer_hw: bool, start_ms: Option<i32>, duration_ms: Option<i32>, blur: Option<f64>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-    let (codec, params, extra) = choose_best_codec(prefer_hw);
+    let (codec, params, extra, _, _) = choose_best_codec(prefer_hw);
     let exe = resolve_ffmpeg_binary().unwrap_or_else(|| "ffmpeg".to_string());
 
     // Construire le filtre vidéo avec blur optionnel
@@ -317,7 +353,7 @@ fn create_video_from_image(image_path: &str, output_path: &str, w: i32, h: i32, 
     let video_filter = vf_parts.join(",");
     
     // Choisir le meilleur codec avec détection automatique
-    let (codec, codec_params, codec_extra) = choose_best_codec(prefer_hw);
+    let (codec, codec_params, codec_extra, _, _) = choose_best_codec(prefer_hw);
     
     let mut cmd = Command::new(&ffmpeg_exe);
     cmd.args(&[
@@ -586,7 +622,17 @@ fn build_and_run_ffmpeg_filter_complex(
         acc += d;
     }
     
-    let (vcodec, vparams, vextra) = choose_best_codec(prefer_hw);
+    let (vcodec, vparams, vextra, error_msg, ffmpeg_path) = choose_best_codec(prefer_hw);
+    
+    // Émettre l'information du codec utilisé
+    let codec_info = serde_json::json!({
+        "export_id": export_id,
+        "codec": vcodec,
+        "hw_accel": vcodec != "libx264",
+        "ffmpeg_path": ffmpeg_path,
+        "error": error_msg
+    });
+    let _ = app_handle.emit("export-codec-info", codec_info);
     
     let mut pre_videos = Vec::new();
     if !bg_videos.is_empty() {
@@ -627,7 +673,7 @@ fn build_and_run_ffmpeg_filter_complex(
     println!("[concat] Fichier ffconcat -> {:?}", concat_path);
     
     let mut cmd = Vec::new();
-    let ffmpeg_exe = resolve_ffmpeg_binary().unwrap_or_else(|| "ffmpeg".to_string());
+    let ffmpeg_exe = ffmpeg_path;
     cmd.extend_from_slice(&[
         ffmpeg_exe.clone(),
         "-y".to_string(),

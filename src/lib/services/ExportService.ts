@@ -178,6 +178,16 @@ function exportProgress(event: any): void {
 		if (data.errorLog) {
 			exportation.errorLog = data.errorLog;
 		}
+		
+		if (data.codec) {
+			exportation.codec = data.codec;
+		}
+		if (data.ffmpeg_path) {
+			exportation.ffmpegPath = data.ffmpeg_path;
+		}
+		if (data.error) {
+			exportation.codecError = data.error;
+		}
 	}
 
 	ExportService.saveExports();
@@ -189,4 +199,7 @@ export interface ExportProgress {
 	currentState: ExportState;
 	currentTime: number;
 	errorLog?: string;
+	codec?: string;
+	ffmpeg_path?: string;
+	error?: string;
 }

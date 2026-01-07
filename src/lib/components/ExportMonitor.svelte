@@ -191,6 +191,17 @@
 									<span class={getStateColor(exportation.currentState)}>
 										{exportation.currentState}
 									</span>
+									{#if exportation.codec}
+										<span 
+											class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-mono border border-gray-600 bg-gray-800 text-gray-300 cursor-help" 
+											title={`Codec: ${exportation.codec}\nFFmpeg: ${exportation.ffmpegPath}\n${exportation.codecError ? '⚠️ Error: ' + exportation.codecError : ''}`}
+										>
+											{exportation.codec}
+											{#if exportation.codecError}
+												<span class="text-yellow-500 ml-1">⚠️</span>
+											{/if}
+										</span>
+									{/if}
 								</div>
 							</div>
 						</div>

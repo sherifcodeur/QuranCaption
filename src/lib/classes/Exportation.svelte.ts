@@ -29,6 +29,9 @@ export default class Exportation extends SerializableBase {
 	errorLog: string;
 	fps: number;
 	date: string;
+	codec: string;
+	ffmpegPath: string;
+	codecError: string;
 
 	constructor(
 		exportId: number,
@@ -59,6 +62,9 @@ export default class Exportation extends SerializableBase {
 		this.currentTreatedTime = $state(currentTreatedTime);
 		this.errorLog = $state(errorLog);
 		this.date = $state(new Date().toISOString());
+		this.codec = $state('');
+		this.ffmpegPath = $state('');
+		this.codecError = $state('');
 	}
 
 	isOnGoing() {

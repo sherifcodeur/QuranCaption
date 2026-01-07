@@ -36,6 +36,13 @@
 	// chunkSize = 1 -> 30s, chunkSize = 50 -> 2min30, chunkSize = 200 -> 10min
 	let CHUNK_DURATION = 0; // Sera calculé dans onMount
 
+	// Information sur le codec utilisé
+	// Information sur le codec utilisé
+	let codecUsed = $state('');
+	let isHwAccel = $state(false);
+	let ffmpegPath = $state('');
+	let codecError = $state('');
+
 	async function exportProgress(event: any) {
 		const data = event.payload as {
 			progress?: number;
@@ -84,11 +91,36 @@
 				exportId: Number(exportId),
 				progress: globalProgress,
 				currentState: ExportState.CreatingVideo,
-				currentTime: globalCurrentTime
+				currentTime: globalCurrentTime,
+				// On transmet aussi l'info codec si disponible
+				codec: codecUsed,
+				ffmpeg_path: ffmpegPath,
+				error: codecError
 			} as ExportProgress);
 		} else {
 			console.log(`Export Processing: ${data.current_time.toFixed(1)}s elapsed`);
 		}
+	}
+
+	async function exportCodecInfo(event: any) {
+		const data = event.payload as {
+			export_id: string;
+			codec: string;
+			hw_accel: boolean;
+			ffmpeg_path: string;
+			error: string;
+		};
+		
+		if (data.export_id !== exportId) return;
+		
+		console.log(`[Codec Info] Codec: ${data.codec}, Hardware Acceleration: ${data.hw_accel}`);
+		codecUsed = data.codec;
+		isHwAccel = data.hw_accel;
+		ffmpegPath = data.ffmpeg_path;
+		codecError = data.error;
+		
+		// Notifier le main window aussi si besoin
+		// emitProgress(...) // Pas strictement nécessaire car c'est pour l'affichage local ici pour l'instant
 	}
 
 	async function exportComplete(event: any) {
@@ -136,6 +168,7 @@
 		listen('export-progress', exportProgress);
 		listen('export-complete', exportComplete);
 		listen('export-error', exportError);
+		listen('export-codec-info', exportCodecInfo);
 
 		// Récupère l'id de l'export, qui est en paramètre d'URL
 		const id = new URLSearchParams(window.location.search).get('id');
