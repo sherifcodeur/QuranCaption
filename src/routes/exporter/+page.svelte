@@ -7,7 +7,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { listen } from '@tauri-apps/api/event';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { exists, BaseDirectory, mkdir, writeFile, remove, readFile } from '@tauri-apps/plugin-fs';
 	import { LogicalPosition } from '@tauri-apps/api/dpi';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -372,6 +372,11 @@
 		const totalFramesExpected = Math.round(((chunkEnd - chunkStart) / 1000.0) * fps);
 		let framesSent = 0;
 
+		globalState.isExporting = true;
+		await tick();
+		// Attendre un court instant pour s'assurer que le rendu CSS est à jour (masquage du voile)
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
 		if (!isHighFidelity) {
 			// ================= MODE RAPIDE (FFmpeg Fades) =================
 			// On force l'opacité 100% car le backend applique les fondus
@@ -473,6 +478,7 @@
 		}
 
 		console.log(`[Stream] Chunk ${chunkIndex} done. Total frames sent: ${framesSent}`);
+		globalState.isExporting = false;
 	}
 
 	async function concatenateVideos(videoFilePaths: string[]) {

@@ -259,7 +259,7 @@ fn choose_best_codec(prefer_hw: bool) -> (String, Vec<String>, HashMap<String, O
     (codec, params, extra)
 }
 
-fn ffmpeg_preprocess_video(src: &str, dst: &str, w: i32, h: i32, fps: i32, prefer_hw: bool, start_ms: Option<i32>, duration_ms: Option<i32>, blur: Option<f64>, overlay_color: Option<String>, overlay_opacity: Option<f64>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+fn ffmpeg_preprocess_video(src: &str, dst: &str, w: i32, h: i32, fps: i32, prefer_hw: bool, start_ms: Option<i32>, duration_ms: Option<i32>, blur: Option<f64>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     let (codec, params, extra) = choose_best_codec(prefer_hw);
     let exe = resolve_ffmpeg_binary().unwrap_or_else(|| "ffmpeg".to_string());
 
@@ -276,13 +276,6 @@ fn ffmpeg_preprocess_video(src: &str, dst: &str, w: i32, h: i32, fps: i32, prefe
         }
     }
 
-    // Ajouter l'overlay de couleur (le voile)
-    if let (Some(color), Some(opacity)) = (overlay_color, overlay_opacity) {
-        if opacity > 0.0 {
-            let clean_color = color.split('@').next().unwrap_or("black");
-            vf_parts.push(format!("drawbox=w=iw:h=ih:color={}@{}:t=fill", clean_color, opacity));
-        }
-    }
     
     vf_parts.push(format!("fps={}", fps));
     vf_parts.push("setsar=1".to_string());
@@ -341,7 +334,7 @@ fn ffmpeg_preprocess_video(src: &str, dst: &str, w: i32, h: i32, fps: i32, prefe
     Ok(())
 }
 
-fn create_video_from_image(image_path: &str, output_path: &str, w: i32, h: i32, fps: i32, duration_s: f64, prefer_hw: bool, blur: Option<f64>, overlay_color: Option<String>, overlay_opacity: Option<f64>) -> Result<(), Box<dyn std::error::Error>> {
+fn create_video_from_image(image_path: &str, output_path: &str, w: i32, h: i32, fps: i32, duration_s: f64, prefer_hw: bool, blur: Option<f64>) -> Result<(), Box<dyn std::error::Error>> {
     let ffmpeg_exe = resolve_ffmpeg_binary().unwrap_or_else(|| "ffmpeg".to_string());
     
     // Construire le filtre vidéo avec blur optionnel
@@ -354,16 +347,6 @@ fn create_video_from_image(image_path: &str, output_path: &str, w: i32, h: i32, 
     if let Some(blur_value) = blur {
         if blur_value > 0.0 {
             vf_parts.push(format!("gblur=sigma={}", blur_value));
-        }
-    }
-    
-    // Ajouter l'overlay de couleur (le voile)
-    if let (Some(color), Some(opacity)) = (overlay_color, overlay_opacity) {
-        if opacity > 0.0 {
-            // FFmpeg drawbox format: color=COLOR@OPACITY
-            // On s'assure que la couleur ne contient pas déjà @
-            let clean_color = color.split('@').next().unwrap_or("black");
-            vf_parts.push(format!("drawbox=w=iw:h=ih:color={}@{}:t=fill", clean_color, opacity));
         }
     }
     
@@ -430,7 +413,7 @@ fn is_image_file(path: &str) -> bool {
     path_lower.ends_with(".tiff") || path_lower.ends_with(".tif")
 }
 
-fn preprocess_background_videos(video_paths: &[String], w: i32, h: i32, fps: i32, prefer_hw: bool, start_time_ms: i32, duration_ms: Option<i32>, blur: Option<f64>, overlay_color: Option<String>, overlay_opacity: Option<f64>) -> Vec<String> {
+fn preprocess_background_videos(video_paths: &[String], w: i32, h: i32, fps: i32, prefer_hw: bool, start_time_ms: i32, duration_ms: Option<i32>, blur: Option<f64>) -> Vec<String> {
     println!("[preproc] Début du prétraitement pour {} vidéos/images...", video_paths.len());
     let mut out_paths = Vec::new();
     let cache_dir = std::env::temp_dir().join("qurancaption-preproc");
@@ -455,7 +438,7 @@ fn preprocess_background_videos(video_paths: &[String], w: i32, h: i32, fps: i32
         let dst = cache_dir.join(format!("img-bg-{}-{}x{}-{}.mp4", stem_hash, w, h, fps));
 
         if !dst.exists() {
-            match create_video_from_image(image_path, &dst.to_string_lossy(), w, h, fps, duration_s, prefer_hw, blur, overlay_color.clone(), overlay_opacity) {
+            match create_video_from_image(image_path, &dst.to_string_lossy(), w, h, fps, duration_s, prefer_hw, blur) {
                 Ok(_) => {},
                 Err(e) => {
                     println!("[preproc][ERREUR] Impossible de créer la vidéo à partir de l'image: {:?}", e);
@@ -522,7 +505,7 @@ fn preprocess_background_videos(video_paths: &[String], w: i32, h: i32, fps: i32
 
         if !dst.exists() {
             // Appeler ffmpeg_preprocess_video avec les offsets locaux
-            match ffmpeg_preprocess_video(p, &dst.to_string_lossy(), w, h, fps, prefer_hw, Some(start_within as i32), Some(take_ms as i32), blur, overlay_color.clone(), overlay_opacity) {
+            match ffmpeg_preprocess_video(p, &dst.to_string_lossy(), w, h, fps, prefer_hw, Some(start_within as i32), Some(take_ms as i32), blur) {
                 Ok(_) => {},
                 Err(e) => {
                     println!("[preproc][ERREUR] {:?}", e);
@@ -673,7 +656,7 @@ fn build_filter_complex_content(
     let overlay_label = if is_streaming && is_high_fidelity {
         // Mode Linéaire (Fidélité Totale) : Le flux pipe contient déjà la séquence complète capturée à 30fps
         filter_lines.push(format!(
-            "[0:v]format=rgba,scale=w={}:h={}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black@0,fps={},setpts=PTS-STARTPTS,setsar=1,format=yuva420p[lin_overlay]",
+            "[0:v]format=rgba,scale=w={}:h={}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black@0,fps={},setpts=PTS-STARTPTS,setsar=1[lin_overlay]",
             w, h, w, h, fps
         ));
         "lin_overlay".to_string()
@@ -685,7 +668,7 @@ fn build_filter_complex_content(
         }
         
         filter_lines.push(format!(
-            "[0:v]format=rgba,scale=w={}:h={}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black@0,fps={},setpts=PTS-STARTPTS,setsar=1,format=yuva420p,split={}{}",
+            "[0:v]format=rgba,scale=w={}:h={}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black@0,fps={},setpts=PTS-STARTPTS,setsar=1,split={}{}",
             w, h, w, h, fps, n, split_outputs
         ));
         
@@ -782,7 +765,9 @@ fn build_filter_complex_content(
     let final_bg_label = if let (Some(color), Some(opacity)) = (overlay_color, overlay_opacity) {
         if opacity > 0.0 {
             let clean_color = color.split('@').next().unwrap_or("black");
-            filter_lines.push(format!("[{}]drawbox=w=iw:h=ih:color={}@{}:t=fill[bg_veiled]", bg_label, clean_color, opacity));
+            // Utiliser une source 'color' et 'overlay' au lieu de 'drawbox' préserve mieux les couleurs
+            filter_lines.push(format!("color=c={}@{}:s={}x{}:r={}:d={}[veil]", clean_color, opacity, w, h, fps, duration_s));
+            filter_lines.push(format!("[{}][veil]overlay=shortest=1:x=0:y=0[bg_veiled]", bg_label));
             "bg_veiled".to_string()
         } else {
             bg_label
@@ -791,7 +776,7 @@ fn build_filter_complex_content(
         bg_label
     };
     
-    filter_lines.push(format!("[{}][{}]overlay=shortest=1:x=0:y=0,format=yuv420p[vout]", final_bg_label, overlay_label));
+    filter_lines.push(format!("[{}][{}]overlay=shortest=1:x=0:y=0:format=auto,format=yuv420p[vout]", final_bg_label, overlay_label));
     
     let mut total_audio_s = 0.0;
     for p in audio_paths {
@@ -965,6 +950,11 @@ fn build_and_run_ffmpeg_filter_complex(
     cmd.extend_from_slice(&[
         "-r".to_string(), fps.to_string(), 
         "-g".to_string(), gop.to_string(),
+        "-pix_fmt".to_string(), "yuv420p".to_string(),
+        "-colorspace".to_string(), "bt709".to_string(),
+        "-color_trc".to_string(), "bt709".to_string(),
+        "-color_primaries".to_string(), "bt709".to_string(),
+        "-color_range".to_string(), "tv".to_string(),
         "-c:v".to_string(), vcodec
     ]);
     if let Some(Some(preset)) = vextra.get("preset") {
@@ -1328,7 +1318,7 @@ pub async fn export_video(
     task::spawn_blocking(move || {
         let mut pre_videos = Vec::new();
         if !videos_vec.is_empty() {
-            pre_videos = preprocess_background_videos(&videos_vec, target_size.0, target_size.1, fps, should_prefer_hw_encoding(), start_time, duration, blur, overlay_color_for_pre, overlay_opacity_for_pre);
+            pre_videos = preprocess_background_videos(&videos_vec, target_size.0, target_size.1, fps, should_prefer_hw_encoding(), start_time, duration, blur);
         }
 
         build_and_run_ffmpeg_filter_complex(
@@ -1673,7 +1663,7 @@ pub async fn start_streaming_export(
 
     let mut pre_videos = Vec::new();
     if !bg_videos.is_empty() {
-        pre_videos = preprocess_background_videos(&bg_videos, w, h, fps, prefer_hw, start_time_ms, duration_ms, blur, overlay_color.clone(), overlay_opacity);
+        pre_videos = preprocess_background_videos(&bg_videos, w, h, fps, prefer_hw, start_time_ms, duration_ms, blur);
     }
 
     let mut cmd_args = Vec::new();
@@ -1752,6 +1742,11 @@ pub async fn start_streaming_export(
         "-r".to_string(), fps.to_string(),
         "-fps_mode".to_string(), "cfr".to_string(),
         "-g".to_string(), gop.to_string(),
+        "-pix_fmt".to_string(), "yuv420p".to_string(),
+        "-colorspace".to_string(), "bt709".to_string(),
+        "-color_trc".to_string(), "bt709".to_string(),
+        "-color_primaries".to_string(), "bt709".to_string(),
+        "-color_range".to_string(), "tv".to_string(),
         "-c:v".to_string(), vcodec
     ]);
     if let Some(Some(preset)) = vextra.get("preset") {

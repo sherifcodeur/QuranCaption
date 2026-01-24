@@ -53,6 +53,9 @@ class GlobalState {
 	// Utilisé pendant l'export pour ignorer les fondus CSS et capturer les images à pleine opacité
 	exportFullOpacity = $state(false);
 
+	// Indique si un export est en cours pour masquer certains éléments UI (ex: le voile de fond)
+	isExporting = $state(false);
+
 	get getSubtitleTrack() {
 		return this.currentProject!.content.timeline.getFirstTrack(
 			TrackType.Subtitle
