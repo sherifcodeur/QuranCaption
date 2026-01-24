@@ -300,7 +300,13 @@
 					durationMs: Math.round(chunkDuration),
 					chunkIndex: i,
 					blur: globalState.getStyle('global', 'overlay-blur')!.value as number,
-					isHighFidelity: hasCustomClips
+					isHighFidelity: hasCustomClips,
+					overlayColor: globalState.getStyle('global', 'overlay-enable')!.value 
+						? globalState.getStyle('global', 'overlay-color')!.value as string 
+						: null,
+					overlayOpacity: globalState.getStyle('global', 'overlay-enable')!.value 
+						? globalState.getStyle('global', 'overlay-opacity')!.value as number 
+						: 0
 				});
 			} catch (e: any) {
 				console.error('Error starting export chunk:', e);
@@ -554,7 +560,13 @@
 				durationMs: Math.round(totalDuration),
 				chunkIndex: null,
 				blur: globalState.getStyle('global', 'overlay-blur')!.value as number,
-				isHighFidelity: globalState.getCustomClipTrack?.clips.length > 0
+				isHighFidelity: globalState.getCustomClipTrack?.clips.length > 0,
+				overlayColor: globalState.getStyle('global', 'overlay-enable')!.value 
+					? globalState.getStyle('global', 'overlay-color')!.value as string 
+					: null,
+				overlayOpacity: globalState.getStyle('global', 'overlay-enable')!.value 
+					? globalState.getStyle('global', 'overlay-opacity')!.value as number 
+					: 0
 			});
 		} catch (e: any) {
 			console.error('Error starting normal export:', e);

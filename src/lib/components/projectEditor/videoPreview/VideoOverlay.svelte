@@ -440,7 +440,7 @@
 </script>
 
 <div class="inset-0 absolute" style="" id="overlay">
-	{#if overlaySettings().enable}
+	{#if overlaySettings().enable && !globalState.exportFullOpacity}
 		<div
 			class="absolute inset-0"
 			style="
