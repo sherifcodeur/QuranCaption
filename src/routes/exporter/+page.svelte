@@ -209,28 +209,38 @@
 	});
 
 	async function startExport() {
-		if (!exportData) return;
+		try {
+			if (!exportData) return;
 
-		const exportStart = Math.round(exportData.videoStartTime);
-		const exportEnd = Math.round(exportData.videoEndTime);
-		const totalDuration = exportEnd - exportStart;
+			const exportStart = Math.round(exportData.videoStartTime);
+			const exportEnd = Math.round(exportData.videoEndTime);
+			const totalDuration = exportEnd - exportStart;
 
-		console.log(`Export duration: ${totalDuration}ms (${totalDuration / 1000 / 60} minutes)`);
+			console.log(`Export duration: ${totalDuration}ms (${totalDuration / 1000 / 60} minutes)`);
 
-		// Détection de la complexité pour ajuster la stratégie
-		const isHighFidelity = globalState.getCustomClipTrack?.clips.length > 0;
-		// Si FastMode, on peut faire de très gros chunks (5min). Si HighFi, on reste prudent (15s).
-		const DYNAMIC_CHUNK_DURATION = isHighFidelity ? 15000 : 300000;
+			// Détection de la complexité pour ajuster la stratégie
+			const isHighFidelity = globalState.getCustomClipTrack?.clips.length > 0;
+			// Si FastMode, on peut faire de très gros chunks (5min). Si HighFi, on reste prudent (15s).
+			const DYNAMIC_CHUNK_DURATION = isHighFidelity ? 15000 : 300000;
 
-		// Si la durée est supérieure à la durée idéale d'un chunk, on découpe
-		if (totalDuration > DYNAMIC_CHUNK_DURATION) {
-			console.log(
-				`Duration > ${DYNAMIC_CHUNK_DURATION}ms, using chunked export (HiFi: ${isHighFidelity})`
-			);
-			await handleChunkedExport(exportStart, exportEnd, totalDuration, isHighFidelity);
-		} else {
-			console.log('Duration short, using normal export');
-			await handleNormalExport(exportStart, exportEnd, totalDuration);
+			// Si la durée est supérieure à la durée idéale d'un chunk, on découpe
+			if (totalDuration > DYNAMIC_CHUNK_DURATION) {
+				console.log(
+					`Duration > ${DYNAMIC_CHUNK_DURATION}ms, using chunked export (HiFi: ${isHighFidelity})`
+				);
+				await handleChunkedExport(exportStart, exportEnd, totalDuration, isHighFidelity);
+			} else {
+				console.log('Duration short, using normal export');
+				await handleNormalExport(exportStart, exportEnd, totalDuration);
+			}
+		} catch (e: any) {
+			console.error('CRITICAL EXPORT ERROR:', e);
+			emitProgress({
+				exportId: Number(exportId),
+				progress: 100,
+				currentState: ExportState.Error,
+				errorLog: e.message || JSON.stringify(e)
+			} as ExportProgress);
 		}
 	}
 
@@ -321,20 +331,31 @@
 			}
 
 			// 2. Diffuser les images
-			await streamFramesForChunk(
-				i,
-				chunk.start,
-				chunk.end,
-				timings,
-				baseProgress,
-				baseProgress + nextProgressWeight,
-				hasCustomClips
-			);
+			try {
+				await streamFramesForChunk(
+					i,
+					chunk.start,
+					chunk.end,
+					timings,
+					baseProgress,
+					baseProgress + nextProgressWeight,
+					hasCustomClips
+				);
 
-			// 3. Finaliser le chunk
-			await invoke('finish_streaming_export', { exportId: exportId });
-			generatedVideoFiles.push(chunkFinalFilePath);
-			console.log(`✅ Chunk ${i} generated via streaming`);
+				// 3. Finaliser le chunk
+				await invoke('finish_streaming_export', { exportId: exportId });
+				generatedVideoFiles.push(chunkFinalFilePath);
+				console.log(`✅ Chunk ${i} generated via streaming`);
+			} catch (e) {
+				console.error(`Error processing chunk ${i}:`, e);
+				// Essayer d'annuler côté backend
+				try {
+					await invoke('cancel_export', { exportId: exportId });
+				} catch (cancelErr) {
+					console.warn('Failed to cancel export after error:', cancelErr);
+				}
+				throw e; // Rethrow to main handler
+			}
 		}
 
 		// PHASE FINALE: Concaténation

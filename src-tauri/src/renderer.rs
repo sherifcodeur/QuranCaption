@@ -277,9 +277,14 @@ impl VideoEncoder {
     }
     
     pub fn finish(mut self) -> Result<(), String> {
+        println!("[VideoEncoder] Finishing... Dropping stdin writer to signal EOF.");
         // Drop writer to close stdin and signal EOF to ffmpeg
         drop(self.writer);
+        
+        println!("[VideoEncoder] Writer dropped. Waiting for FFmpeg process to exit...");
         let status = self.child.wait().map_err(|e| format!("Failed to wait on ffmpeg: {}", e))?;
+        
+        println!("[VideoEncoder] FFmpeg process exited with status: {}", status);
         if status.success() {
             Ok(())
         } else {
@@ -779,16 +784,43 @@ impl Renderer {
         let index = self.ctx.queue.submit(Some(encoder.finish()));
         
         let buffer_slice = self.output_buffer.slice(..);
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
         
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
         
-        self.ctx.device.poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: None }).unwrap();
+        // Timeout mechanism for GPU readback to prevent hanging forever
+        let timeout_duration = std::time::Duration::from_secs(180);
+        let start_time = std::time::Instant::now();
         
-        rx.await.map_err(|e| format!("Map async error: {}", e))?
-          .map_err(|e| format!("Buffer map error: {}", e))?;
+        loop {
+            // Poll the device to process the map_async request
+            // Use Wait with a small timeout to allow checking our total timeout
+            self.ctx.device.poll(wgpu::PollType::Wait { 
+                submission_index: Some(index.clone()), 
+                timeout: Some(std::time::Duration::from_millis(100)) 
+            }).map_err(|e| format!("Poll error: {}", e))?;
+            
+            // Checks if the channel has a result
+            match rx.try_recv() {
+                Ok(result) => {
+                    // Channel has a value, proceed
+                    result.map_err(|e| format!("Buffer map error: {}", e))?;
+                    break;
+                },
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                    // Not ready yet
+                    if start_time.elapsed() > timeout_duration {
+                        return Err("GPU Readback Timeout (180s)".to_string());
+                    }
+                    // Loop again
+                },
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                     return Err("GPU Read Channel Closed unexpectedly".to_string());
+                }
+            }
+        }
         
         let data = buffer_slice.get_mapped_range();
         let result = data.to_vec();
