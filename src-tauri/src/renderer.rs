@@ -830,4 +830,11 @@ impl Renderer {
         
         Ok(result)
     }
+
+    pub fn flush(&self) {
+        println!("[Renderer] Flushing GPU command queue...");
+        self.ctx.device.poll(wgpu::PollType::Wait).unwrap();
+        println!("[Renderer] GPU Flush complete.");
+    }
+}
 }

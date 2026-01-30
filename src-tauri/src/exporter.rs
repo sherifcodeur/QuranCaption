@@ -1822,6 +1822,10 @@ pub async fn finish_streaming_export(export_id: String) -> Result<(), String> {
 
     println!("[finish_streaming_export] Session removed from map. unwrapping Arc...");
     let session = Arc::try_unwrap(session).map_err(|_| "Session still in use (Arc count > 1)")?;
+
+    // Force flush GPU before destroying resources
+    println!("[finish_streaming_export] Flushing GPU resources...");
+    session.renderer.flush();
     
     println!("[finish_streaming_export] Unwrapping Encoder...");
     let encoder = Arc::try_unwrap(session.encoder).map_err(|_| "Encoder still in use")?.into_inner();
