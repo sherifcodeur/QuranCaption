@@ -1675,9 +1675,12 @@ pub async fn start_streaming_export(
     let color_val = overlay_color.unwrap_or_else(|| "#000000".to_string());
     let opacity_val = overlay_opacity.unwrap_or(0.0);
 
+    let duration_s = duration_ms.unwrap_or(0) as f64 / 1000.0;
+    
     println!("[start_streaming_export] Initializing Decoder...");
     let decoder = crate::renderer::VideoDecoder::new(
-        bg_path, w as u32, h as u32, fps as u32, start_time_ms as u32,
+        bg_path, w as u32, h as u32, fps as u32, start_time_ms as u32, 
+        duration_s, // Add duration here
         blur_val, 
         // We do NOT pass overlay info to Decoder anymore (FFmpeg tint removed)
         // &color_val, opacity_val. 
@@ -1697,7 +1700,8 @@ pub async fn start_streaming_export(
         ("libx264", vec!["-crf".to_string(), "23".to_string()], Some("medium".to_string()))
     };
 
-    let duration_s = duration_ms.unwrap_or(0) as f64 / 1000.0;
+    // duration_s already defined above
+
     let encoder = crate::renderer::VideoEncoder::new(
         &out_path, w as u32, h as u32, fps as u32, 
         vcodec, vparams, vpreset, 

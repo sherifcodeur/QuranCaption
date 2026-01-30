@@ -64,6 +64,7 @@ impl VideoDecoder {
         height: u32, 
         fps: u32, 
         start_time_ms: u32,
+        duration_s: f64,
         blur: f64,
         overlay_color: &str, 
         overlay_opacity: f64
@@ -93,6 +94,9 @@ impl VideoDecoder {
             // Seek support: add -ss BEFORE -i for fast input seeking
             if !is_image && start_time_ms > 0 {
                 cmd.arg("-ss").arg(format!("{:.3}", start_time_ms as f64 / 1000.0));
+            }
+            if !is_image && duration_s > 0.0 {
+                 cmd.arg("-t").arg(format!("{:.3}", duration_s));
             }
             cmd.args(&["-i", path]);
         }
@@ -162,6 +166,14 @@ impl VideoDecoder {
         })?;
         
         Ok(buffer)
+    }
+}
+
+impl Drop for VideoDecoder {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        println!("[VideoDecoder] Dropped and killed child process");
     }
 }
 
