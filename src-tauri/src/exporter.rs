@@ -1763,8 +1763,8 @@ pub async fn send_frame(export_id: String, frame_data: Vec<u8>, count: u32) -> R
     for i in 0..count {
         if i == 0 && count > 10 { println!("[send_frame] Starting batch of {} frames...", count); }
         
+        let t0 = std::time::Instant::now();
         // Read background frame
-        // println!("[send_frame] Reading decoder frame...");
         let bg_raw = match decoder.read_frame() {
             Ok(f) => f,
             Err(e) if e == "EOF" => {
@@ -1773,12 +1773,15 @@ pub async fn send_frame(export_id: String, frame_data: Vec<u8>, count: u32) -> R
             },
             Err(e) => return Err(e),
         };
+        let t_decode = t0.elapsed();
 
+        let t1 = std::time::Instant::now();
         renderer.upload_background(&bg_raw);
+        let t_upload = t1.elapsed();
         
         // Calculate alpha for fade if not High Fidelity
         let alpha = if session.is_high_fidelity {
-            1.0 // In High Fidelity, alpha is already baked into the PNG by the frontend
+            1.0 
         } else if fade_frames > 0 {
             let fade_in = i as f32 / fade_frames as f32;
             let fade_out = (count.saturating_sub(1).saturating_sub(i)) as f32 / fade_frames as f32;
@@ -1787,25 +1790,32 @@ pub async fn send_frame(export_id: String, frame_data: Vec<u8>, count: u32) -> R
             1.0
         };
 
+        let t2 = std::time::Instant::now();
         // 3. Composite everything (3-Layer "Sandwich")
-        // Layer 1: Background (upload_background done above)
-        // Layer 2: Tint (Handled by render_image first pass)
-        // Layer 3: Subtitles (Handled by render_image second pass with dynamic alpha)
         renderer.render_image(
             alpha, 
             session.overlay_enable, 
             session.overlay_opacity
         );
+        let t_render = t2.elapsed();
 
         // Readback
-        // println!("[send_frame] GPU Readback...");
+        let t3 = std::time::Instant::now();
         let frame_out = match renderer.read_frame().await {
             Ok(f) => f,
             Err(e) => return Err(format!("GPU Readback Failed: {}", e)),
         };
+        let t_readback = t3.elapsed();
 
         // Encode
+        let t4 = std::time::Instant::now();
         encoder.write_frame(&frame_out).map_err(|e| e.to_string())?;
+        let t_encode = t4.elapsed();
+
+        if t_decode.as_millis() > 100 || t_readback.as_millis() > 100 || t_encode.as_millis() > 100 {
+            println!("[PerfWarning] Slow Frame: Decode={:?}, Upload={:?}, Render={:?}, Readback={:?}, Encode={:?}", 
+                t_decode, t_upload, t_render, t_readback, t_encode);
+        }
     }
     
     // println!("[send_frame] Batch finished.");
@@ -1825,7 +1835,10 @@ pub async fn finish_streaming_export(export_id: String) -> Result<(), String> {
 
     // Force flush GPU before destroying resources
     println!("[finish_streaming_export] Flushing GPU resources...");
-    session.renderer.flush();
+    {
+        let renderer_guard = session.renderer.lock().await;
+        renderer_guard.flush();
+    }
     
     println!("[finish_streaming_export] Unwrapping Encoder...");
     let encoder = Arc::try_unwrap(session.encoder).map_err(|_| "Encoder still in use")?.into_inner();
