@@ -16,7 +16,7 @@
 	import { getAllWindows } from '@tauri-apps/api/window';
 	import Exportation, { ExportState } from '$lib/classes/Exportation.svelte';
 	import toast from 'svelte-5-french-toast';
-	import DomToImage from 'dom-to-image';
+	import DomToImage from '$lib/dom-to-image-patched.js';
 	import SubtitleClip from '$lib/components/projectEditor/timeline/track/SubtitleClip.svelte';
 	import { ClipWithTranslation, CustomTextClip, SilenceClip } from '$lib/classes/Clip.svelte';
 
@@ -655,9 +655,9 @@
 		const scale = Math.min(targetWidth / node.clientWidth, targetHeight / node.clientHeight);
 
 		try {
-			// Step 1: Get SVG data URI (no internal canvas created by dom-to-image)
-			const svgDataUri = await Promise.race([
-				DomToImage.toSvg(node, {
+			// Use toPng from patched dom-to-image (includes cleanup)
+			const dataUrl = await Promise.race([
+				DomToImage.toPng(node, {
 					width: node.clientWidth * scale,
 					height: node.clientHeight * scale,
 					style: { transform: 'scale(' + scale + ')', transformOrigin: 'top left' },
@@ -668,32 +668,7 @@
 				)
 			]);
 
-			// Step 2: Create our own controlled canvas
-			const canvas = document.createElement('canvas');
-			canvas.width = targetWidth;
-			canvas.height = targetHeight;
-			const ctx = canvas.getContext('2d')!;
-
-			// Step 3: Load SVG into controlled Image
-			const img = new Image();
-			img.src = svgDataUri;
-			await new Promise<void>((resolve, reject) => {
-				img.onload = () => resolve();
-				img.onerror = reject;
-			});
-
-			// Step 4: Draw and extract PNG
-			ctx.drawImage(img, 0, 0);
-			const dataUrl = canvas.toDataURL('image/png');
-
-			// Step 5: EXPLICIT CLEANUP - Release GPU/memory resources
-			img.onload = null;
-			img.onerror = null;
-			img.src = ''; // Release image resource
-			canvas.width = 0; // Release canvas GPU memory
-			canvas.height = 0;
-
-			// Step 6: Convert to bytes
+			// Convert dataUrl to bytes
 			const response = await fetch(dataUrl);
 			const buffer = await response.arrayBuffer();
 			return new Uint8Array(buffer);
