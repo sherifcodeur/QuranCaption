@@ -848,5 +848,23 @@ impl Renderer {
         self.ctx.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
         println!("[Renderer] GPU Flush complete.");
     }
+
+    pub async fn maintain(&self) -> Result<(), String> {
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        self.ctx.queue.on_submitted_work_done(move || {
+            let _ = tx.send(());
+        });
+
+        // Bloquer jusqu'à ce que le GPU ait fini le travail soumis
+        while let Err(tokio::sync::oneshot::error::TryRecvError::Empty) = rx.try_recv() {
+            self.ctx.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            }).map_err(|e| format!("WGPU Poll Error: {}", e))?;
+        }
+        
+        Ok(())
+    }
+
 }
 

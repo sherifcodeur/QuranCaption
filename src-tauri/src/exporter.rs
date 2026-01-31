@@ -1559,7 +1559,7 @@ pub async fn concat_videos(
     println!("[concat_videos] Exécution de FFmpeg...");
     
     // Lancement du processus en mode Child pour pouvoir l'annuler
-    let mut child = cmd.spawn()
+    let child = cmd.spawn()
         .map_err(|e| format!("Erreur lancement FFmpeg concat: {}", e))?;
     
     // Enregistrement dans ACTIVE_EXPORTS
@@ -1823,7 +1823,10 @@ pub async fn send_frame(export_id: String, frame_data: Vec<u8>, count: u32) -> R
     }
     
     // println!("[send_frame] Batch finished.");
+    renderer.maintain().await.map_err(|e| format!("WGPU Maintain Error: {}", e))?;
     Ok(())
+
+
 }
 
 #[tauri::command]

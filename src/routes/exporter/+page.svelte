@@ -441,6 +441,9 @@
 			globalState.exportFullOpacity = false;
 
 			while (currentTime < endTime && framesSent < totalFramesExpected) {
+				// Memory Saver: Yield to event loop every 10 frames to allow GC
+				if (framesSent % 10 === 0) await new Promise((r) => setTimeout(r, 1));
+
 				const nextTiming = timings.uniqueSorted.find((t: number) => t > currentTime + 1) || endTime;
 
 				// Vérifier si nous sommes dans une zone de transition (fondus)
@@ -644,16 +647,18 @@
 	}
 
 	async function captureFrameRaw(): Promise<Uint8Array | null> {
-		console.log('[Capture] Starting captureFrameRaw...');
+		// console.log('[Capture] Starting captureFrameRaw...'); // Removed for memory optimization
 		let node = document.getElementById('overlay')!;
 		if (!node) {
-			console.error('[Capture] Overlay node not found');
+			// console.error('[Capture] Overlay node not found');
 			return null;
 		}
 		const targetWidth = exportData!.videoDimensions.width;
 		const targetHeight = exportData!.videoDimensions.height;
 		const scale = Math.min(targetWidth / node.clientWidth, targetHeight / node.clientHeight);
 		try {
+			// Using blob instead of PNG dataURL might be lighter but toPng returns dataUrl.
+			// Optimize: try to minimize string retention.
 			const dataUrl = (await Promise.race([
 				DomToImage.toPng(node, {
 					width: node.clientWidth * scale,
@@ -667,14 +672,19 @@
 					setTimeout(() => reject(new Error('DomToImage timeout (10s)')), 10000)
 				)
 			])) as string;
-			console.log('[Capture] DomToImage success');
+			// console.log('[Capture] DomToImage success');
+			
 			const response = await fetch(dataUrl);
             const arrayBuffer = await response.arrayBuffer();
 			const bytes = new Uint8Array(arrayBuffer);
-            if (bytes.length < 1000) console.warn(`[Capture] Suspiciously small frame: ${bytes.length} bytes`);
+			
+			// Critical: Try to hint browser to release the giant string
+			// (Cannot explicit free string in JS, but leaving scope helps)
+			
+            if (bytes.length < 1000) console.warn(`[Capture] Suspiciously small frame`);
 			return bytes;
 		} catch (error) {
-			console.error('[Capture] Error while capturing frame: ', error);
+			console.error('[Capture] Error: ', error);
 			return null;
 		}
 	}
