@@ -647,44 +647,58 @@
 	}
 
 	async function captureFrameRaw(): Promise<Uint8Array | null> {
-		// console.log('[Capture] Starting captureFrameRaw...'); // Removed for memory optimization
-		let node = document.getElementById('overlay')!;
-		if (!node) {
-			// console.error('[Capture] Overlay node not found');
-			return null;
-		}
+		const node = document.getElementById('overlay')!;
+		if (!node) return null;
+
 		const targetWidth = exportData!.videoDimensions.width;
 		const targetHeight = exportData!.videoDimensions.height;
 		const scale = Math.min(targetWidth / node.clientWidth, targetHeight / node.clientHeight);
+
 		try {
-			// Using blob instead of PNG dataURL might be lighter but toPng returns dataUrl.
-			// Optimize: try to minimize string retention.
-			const dataUrl = (await Promise.race([
-				DomToImage.toPng(node, {
+			// Step 1: Get SVG data URI (no internal canvas created by dom-to-image)
+			const svgDataUri = await Promise.race([
+				DomToImage.toSvg(node, {
 					width: node.clientWidth * scale,
 					height: node.clientHeight * scale,
 					style: { transform: 'scale(' + scale + ')', transformOrigin: 'top left' },
-                    filter: (node: Node) => {
-                        return (node as Element).id !== 'overlay-tint-layer';
-                    }
+					filter: (n: Node) => (n as Element).id !== 'overlay-tint-layer'
 				}),
-				new Promise((_, reject) =>
+				new Promise<string>((_, reject) =>
 					setTimeout(() => reject(new Error('DomToImage timeout (10s)')), 10000)
 				)
-			])) as string;
-			// console.log('[Capture] DomToImage success');
-			
+			]);
+
+			// Step 2: Create our own controlled canvas
+			const canvas = document.createElement('canvas');
+			canvas.width = targetWidth;
+			canvas.height = targetHeight;
+			const ctx = canvas.getContext('2d')!;
+
+			// Step 3: Load SVG into controlled Image
+			const img = new Image();
+			img.src = svgDataUri;
+			await new Promise<void>((resolve, reject) => {
+				img.onload = () => resolve();
+				img.onerror = reject;
+			});
+
+			// Step 4: Draw and extract PNG
+			ctx.drawImage(img, 0, 0);
+			const dataUrl = canvas.toDataURL('image/png');
+
+			// Step 5: EXPLICIT CLEANUP - Release GPU/memory resources
+			img.onload = null;
+			img.onerror = null;
+			img.src = ''; // Release image resource
+			canvas.width = 0; // Release canvas GPU memory
+			canvas.height = 0;
+
+			// Step 6: Convert to bytes
 			const response = await fetch(dataUrl);
-            const arrayBuffer = await response.arrayBuffer();
-			const bytes = new Uint8Array(arrayBuffer);
-			
-			// Critical: Try to hint browser to release the giant string
-			// (Cannot explicit free string in JS, but leaving scope helps)
-			
-            if (bytes.length < 1000) console.warn(`[Capture] Suspiciously small frame`);
-			return bytes;
+			const buffer = await response.arrayBuffer();
+			return new Uint8Array(buffer);
 		} catch (error) {
-			console.error('[Capture] Error: ', error);
+			console.error('[Capture] Error:', error);
 			return null;
 		}
 	}
@@ -878,20 +892,22 @@
 		}
 		const startTime = Date.now();
 		const timeout = 1500;
-        let loops = 0;
+		let loops = 0;
 		while (true) {
-            loops++;
+			loops++;
 			const container = document.getElementById('subtitles-container');
 			if (!container || container.style.opacity === '1') {
 				break;
 			}
 			if (Date.now() - startTime > timeout) {
-                console.warn(`[Wait] Timeout waiting for opacity=1 at ${timing}ms. Current: ${container?.style.opacity}`);
+				console.warn(
+					`[Wait] Timeout waiting for opacity=1 at ${timing}ms. Current: ${container?.style.opacity}`
+				);
 				break;
 			}
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-        // console.log(`[Wait] Ready at ${timing}ms after ${loops} loops`);
+		// console.log(`[Wait] Ready at ${timing}ms after ${loops} loops`);
 	}
 </script>
 
