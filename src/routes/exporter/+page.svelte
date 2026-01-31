@@ -20,6 +20,20 @@
 	import SubtitleClip from '$lib/components/projectEditor/timeline/track/SubtitleClip.svelte';
 	import { ClipWithTranslation, CustomTextClip, SilenceClip } from '$lib/classes/Clip.svelte';
 
+	// ============ RESUME STATE FOR MEMORY CLEANUP RELOAD ============
+	interface ResumeState {
+		exportId: string;
+		currentChunkIndex: number;
+		generatedVideoFiles: string[];
+		totalChunks: number;
+		exportStart: number;
+		exportEnd: number;
+		totalDuration: number;
+		isHighFidelity: boolean;
+		chunkDuration: number;
+	}
+	const RESUME_KEY = 'export_resume_state';
+
 	// Indique si l'enregistrement a commencé
 	let readyToExport = $state(false);
 
@@ -151,8 +165,8 @@
 				recursive: true
 			});
 
-			// Supprime le fichier projet JSON
-			ExportService.deleteProjectFile(Number(id));
+			// NOTE: Ne pas supprimer le fichier projet ici - sera fait dans finalCleanup
+			// pour permettre les reloads entre chunks
 
 			// Récupère les données d'export
 			exportData = ExportService.findExportById(Number(id))!;
@@ -203,7 +217,23 @@
 
 			readyToExport = true;
 
-			// Démarrer l'export
+			// ============ CHECK FOR RESUME STATE ============
+			const resumeStateJson = localStorage.getItem(RESUME_KEY);
+			if (resumeStateJson) {
+				const resumeState: ResumeState = JSON.parse(resumeStateJson);
+				// Vérifier que c'est bien le même export
+				if (resumeState.exportId === exportId) {
+					console.log(`🔄 Resuming export from chunk ${resumeState.currentChunkIndex}/${resumeState.totalChunks}`);
+					CHUNK_DURATION = resumeState.chunkDuration;
+					await resumeExportChunked(resumeState);
+					return;
+				} else {
+					// Different export, clear old state
+					localStorage.removeItem(RESUME_KEY);
+				}
+			}
+
+			// Démarrer l'export normalement
 			await startExport();
 		}
 	});
@@ -252,8 +282,9 @@
 	) {
 		const chunkInfo = calculateChunksWithFadeOut(exportStart, exportEnd, isHighFidelity);
 		const generatedVideoFiles: string[] = [];
+		const totalChunks = chunkInfo.chunks.length;
 
-		console.log(`Splitting into ${chunkInfo.chunks.length} chunks`);
+		console.log(`Splitting into ${totalChunks} chunks`);
 
 		// Initialiser l'état
 		emitProgress({
@@ -264,13 +295,48 @@
 			totalTime: totalDuration
 		} as ExportProgress);
 
-		for (let i = 0; i < chunkInfo.chunks.length; i++) {
-			const chunk = chunkInfo.chunks[i];
+		// Process only the first chunk, then reload for memory cleanup
+		await processChunk(0, chunkInfo.chunks, generatedVideoFiles, totalChunks, exportStart, exportEnd, totalDuration, isHighFidelity);
+	}
+
+	// ============ RESUME EXPORT FROM SAVED STATE ============
+	async function resumeExportChunked(resumeState: ResumeState) {
+		const chunkInfo = calculateChunksWithFadeOut(resumeState.exportStart, resumeState.exportEnd, resumeState.isHighFidelity);
+		const generatedVideoFiles = resumeState.generatedVideoFiles;
+
+		console.log(`🔄 Resuming from chunk ${resumeState.currentChunkIndex}, already completed: ${generatedVideoFiles.length} files`);
+
+		// Continue from the current chunk
+		await processChunk(
+			resumeState.currentChunkIndex,
+			chunkInfo.chunks,
+			generatedVideoFiles,
+			resumeState.totalChunks,
+			resumeState.exportStart,
+			resumeState.exportEnd,
+			resumeState.totalDuration,
+			resumeState.isHighFidelity
+		);
+	}
+
+	// ============ PROCESS A SINGLE CHUNK ============
+	async function processChunk(
+		startIndex: number,
+		chunks: { start: number; end: number }[],
+		generatedVideoFiles: string[],
+		totalChunks: number,
+		exportStart: number,
+		exportEnd: number,
+		totalDuration: number,
+		isHighFidelity: boolean
+	) {
+		for (let i = startIndex; i < chunks.length; i++) {
+			const chunk = chunks[i];
 			const chunkDuration = chunk.end - chunk.start;
-			const nextProgressWeight = 100 / chunkInfo.chunks.length;
+			const nextProgressWeight = 100 / totalChunks;
 			const baseProgress = i * nextProgressWeight;
 
-			console.log(`Processing Chunk ${i}: ${chunk.start} -> ${chunk.end}`);
+			console.log(`Processing Chunk ${i}/${totalChunks}: ${chunk.start} -> ${chunk.end}`);
 
 			// 1. Démarrer FFmpeg pour ce chunk
 			const audios = globalState.getAudioTrack.clips.map(
@@ -293,8 +359,6 @@
 				}) || false;
 
 			const timings = calculateTimingsForRange(chunk.start, chunk.end, !hasCustomClips);
-
-			// Si Fast Mode, les timings sont simplifiés (start/end), ce qui génère 1 segment par clip -> 1 fade in/out
 
 			try {
 				await invoke('start_streaming_export', {
@@ -321,6 +385,7 @@
 				});
 			} catch (e: any) {
 				console.error('Error starting export chunk:', e);
+				localStorage.removeItem(RESUME_KEY); // Clear resume state on error
 				emitProgress({
 					exportId: Number(exportId),
 					progress: 100,
@@ -346,8 +411,36 @@
 				await invoke('finish_streaming_export', { exportId: exportId });
 				generatedVideoFiles.push(chunkFinalFilePath);
 				console.log(`✅ Chunk ${i} generated via streaming`);
+
+				// ============ MEMORY CLEANUP: RELOAD AFTER CHUNK ============
+				const isLastChunk = i === chunks.length - 1;
+				if (!isLastChunk) {
+					// Save state for resume after reload
+					const resumeState: ResumeState = {
+						exportId,
+						currentChunkIndex: i + 1, // Next chunk to process
+						generatedVideoFiles,
+						totalChunks,
+						exportStart,
+						exportEnd,
+						totalDuration,
+						isHighFidelity,
+						chunkDuration: CHUNK_DURATION
+					};
+					localStorage.setItem(RESUME_KEY, JSON.stringify(resumeState));
+					console.log(`💾 Saved resume state for chunk ${i + 1}, reloading for memory cleanup...`);
+					
+					// Give a moment for localStorage to persist
+					await new Promise(resolve => setTimeout(resolve, 500));
+					
+					// Reload the page to free WebView memory
+					window.location.reload();
+					return; // Exit, reload will resume from next chunk
+				}
+
 			} catch (e) {
 				console.error(`Error processing chunk ${i}:`, e);
+				localStorage.removeItem(RESUME_KEY); // Clear resume state on error
 				// Essayer d'annuler côté backend
 				try {
 					await invoke('cancel_export', { exportId: exportId });
@@ -358,7 +451,8 @@
 			}
 		}
 
-		// PHASE FINALE: Concaténation
+		// ============ ALL CHUNKS DONE: CONCATENATION ============
+		localStorage.removeItem(RESUME_KEY); // Clear resume state
 		console.log('=== FINAL PHASE: Concatenation ===');
 		try {
 			await concatenateVideos(generatedVideoFiles);
@@ -377,6 +471,7 @@
 
 		await finalCleanup();
 	}
+
 
 	async function streamFramesForChunk(
 		chunkIndex: number | null,
@@ -634,6 +729,14 @@
 	}
 
 	async function finalCleanup() {
+		// Supprimer le fichier projet JSON (déferred depuis onMount pour permettre les reloads)
+		try {
+			ExportService.deleteProjectFile(Number(exportId));
+			console.log('Project file deleted.');
+		} catch (e) {
+			console.warn('Could not delete project file:', e);
+		}
+
 		try {
 			await remove(await join(ExportService.exportFolder, exportId), {
 				baseDir: BaseDirectory.AppData,
