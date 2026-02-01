@@ -50,11 +50,26 @@ impl WgpuContext {
 }
 
 
+/// Represents the source of video frames - either from FFmpeg or generated synthetically
+enum DecoderSource {
+    /// FFmpeg child process for real video/image files
+    Ffmpeg {
+        child: Child,
+        reader: std::io::BufReader<ChildStdout>,
+    },
+    /// Synthetic solid color background - no FFmpeg needed
+    Synthetic {
+        /// RGBA color bytes (R, G, B, A)
+        color_rgba: [u8; 4],
+        /// Pre-computed frame buffer (reused for each read_frame call)
+        frame_buffer: Vec<u8>,
+    },
+}
+
 pub struct VideoDecoder {
-    pub child: Child,
     pub width: u32,
     pub height: u32,
-    pub reader: std::io::BufReader<ChildStdout>,
+    source: DecoderSource,
 }
 
 impl VideoDecoder {
@@ -69,37 +84,56 @@ impl VideoDecoder {
         overlay_color: &str, 
         overlay_opacity: f64
     ) -> Result<Self, String> {
-        let ffmpeg_exe = "ffmpeg"; 
         
+        // Check if this is a synthetic background (solid color)
+        if path.starts_with("synthetic:") {
+            let color_name = path.strip_prefix("synthetic:").unwrap_or("black");
+            
+            // Parse color name to RGBA
+            let color_rgba = Self::parse_color_to_rgba(color_name);
+            
+            // Pre-allocate the frame buffer filled with the color
+            let frame_size = (width * height * 4) as usize;
+            let mut frame_buffer = Vec::with_capacity(frame_size);
+            for _ in 0..(width * height) {
+                frame_buffer.extend_from_slice(&color_rgba);
+            }
+            
+            println!("[VideoDecoder] Using SYNTHETIC background: {} (RGBA: {:?}) - NO FFmpeg process!", 
+                     color_name, color_rgba);
+            
+            return Ok(Self {
+                width,
+                height,
+                source: DecoderSource::Synthetic {
+                    color_rgba,
+                    frame_buffer,
+                },
+            });
+        }
+        
+        // For real video/image files, use FFmpeg
+        let ffmpeg_exe = "ffmpeg"; 
         let mut cmd = Command::new(ffmpeg_exe);
         
-        if path.starts_with("synthetic:") {
-            // Support for solid color background via lavfi
-            let color = path.strip_prefix("synthetic:").unwrap_or("black");
-            cmd.args(&[
-                "-f", "lavfi",
-                "-i", &format!("color=c={}:s={}x{}:r={}", color, width, height, fps),
-            ]);
-        } else {
-            // Detect if it's an image to apply -loop 1
-            let is_image = path.to_lowercase().ends_with(".png") || 
-                           path.to_lowercase().ends_with(".jpg") || 
-                           path.to_lowercase().ends_with(".jpeg") ||
-                           path.to_lowercase().ends_with(".webp");
+        // Detect if it's an image to apply -loop 1
+        let is_image = path.to_lowercase().ends_with(".png") || 
+                       path.to_lowercase().ends_with(".jpg") || 
+                       path.to_lowercase().ends_with(".jpeg") ||
+                       path.to_lowercase().ends_with(".webp");
 
-            if is_image {
-                cmd.arg("-loop").arg("1");
-            }
-
-            // Seek support: add -ss BEFORE -i for fast input seeking
-            if !is_image && start_time_ms > 0 {
-                cmd.arg("-ss").arg(format!("{:.3}", start_time_ms as f64 / 1000.0));
-            }
-            if !is_image && duration_s > 0.0 {
-                 cmd.arg("-t").arg(format!("{:.3}", duration_s));
-            }
-            cmd.args(&["-i", path]);
+        if is_image {
+            cmd.arg("-loop").arg("1");
         }
+
+        // Seek support: add -ss BEFORE -i for fast input seeking
+        if !is_image && start_time_ms > 0 {
+            cmd.arg("-ss").arg(format!("{:.3}", start_time_ms as f64 / 1000.0));
+        }
+        if !is_image && duration_s > 0.0 {
+             cmd.arg("-t").arg(format!("{:.3}", duration_s));
+        }
+        cmd.args(&["-i", path]);
 
         // 1. Scale and Pad (Letterboxing)
         let mut filters = format!(
@@ -145,35 +179,75 @@ impl VideoDecoder {
         
         let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
         
+        println!("[VideoDecoder] Using FFmpeg for: {}", path);
+        
         Ok(Self {
-            child,
             width,
             height,
-            reader: std::io::BufReader::new(stdout),
+            source: DecoderSource::Ffmpeg {
+                child,
+                reader: std::io::BufReader::new(stdout),
+            },
         })
     }
     
+    /// Parse a color name or hex code to RGBA bytes
+    fn parse_color_to_rgba(color: &str) -> [u8; 4] {
+        match color.to_lowercase().as_str() {
+            "black" => [0, 0, 0, 255],
+            "white" => [255, 255, 255, 255],
+            "red" => [255, 0, 0, 255],
+            "green" => [0, 255, 0, 255],
+            "blue" => [0, 0, 255, 255],
+            "transparent" => [0, 0, 0, 0],
+            hex if hex.starts_with('#') && hex.len() == 7 => {
+                // Parse #RRGGBB
+                let r = u8::from_str_radix(&hex[1..3], 16).unwrap_or(0);
+                let g = u8::from_str_radix(&hex[3..5], 16).unwrap_or(0);
+                let b = u8::from_str_radix(&hex[5..7], 16).unwrap_or(0);
+                [r, g, b, 255]
+            },
+            _ => [0, 0, 0, 255], // Default to black
+        }
+    }
+    
     pub fn read_frame(&mut self) -> Result<Vec<u8>, String> {
-        let frame_size = (self.width * self.height * 4) as usize;
-        let mut buffer = vec![0u8; frame_size];
-        
-        self.reader.read_exact(&mut buffer).map_err(|e: std::io::Error| {
-             if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                 "EOF".to_string()
-             } else {
-                 format!("Failed to read frame: {}", e)
-             }
-        })?;
-        
-        Ok(buffer)
+        match &mut self.source {
+            DecoderSource::Synthetic { frame_buffer, .. } => {
+                // Return a clone of the pre-computed buffer
+                // This is much faster than FFmpeg generating frames
+                Ok(frame_buffer.clone())
+            },
+            DecoderSource::Ffmpeg { reader, .. } => {
+                let frame_size = (self.width * self.height * 4) as usize;
+                let mut buffer = vec![0u8; frame_size];
+                
+                reader.read_exact(&mut buffer).map_err(|e: std::io::Error| {
+                     if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                         "EOF".to_string()
+                     } else {
+                         format!("Failed to read frame: {}", e)
+                     }
+                })?;
+                
+                Ok(buffer)
+            }
+        }
     }
 }
 
 impl Drop for VideoDecoder {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        println!("[VideoDecoder] Dropped and killed child process");
+        match &mut self.source {
+            DecoderSource::Ffmpeg { child, .. } => {
+                let _ = child.kill();
+                let _ = child.wait();
+                println!("[VideoDecoder] Dropped and killed FFmpeg child process");
+            },
+            DecoderSource::Synthetic { .. } => {
+                println!("[VideoDecoder] Dropped synthetic decoder (no process to kill)");
+            }
+        }
     }
 }
 
