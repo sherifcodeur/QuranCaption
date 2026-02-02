@@ -224,7 +224,7 @@
 					</div>
 				</div>
 			{/if}
-			{#each paginatedKeys as verseKey}
+			{#each paginatedKeys as verseKey (verseKey)}
 				{@const group = translationsState.getVerseGroup(verseKey)}
 				{#if group}
 					{@const firstClipInGroup = clips[group.indices[0]] as SubtitleClip | PredefinedSubtitleClip}
@@ -237,19 +237,17 @@
 							</div>
 						{/if}
 
-						{#each group.indices as clipIndex}
+						{#each group.indices as clipIndex (clipIndex)}
 							<section class="relative">
 								<ArabicText subtitle={clips[clipIndex]} />
-								{#each editionsToShowInEditor as edition}
-									{#key edition.name}
-										<Translation
-											{edition}
-											bind:subtitle={clips[clipIndex] as SubtitleClip}
-											previousSubtitle={clipIndex > 0
-												? (globalState.getSubtitleTrack.getSubtitleBefore(clipIndex) as SubtitleClip)
-												: undefined}
-										/>
-									{/key}
+								{#each editionsToShowInEditor as edition (edition.name)}
+									<Translation
+										{edition}
+										bind:subtitle={clips[clipIndex] as SubtitleClip}
+										previousSubtitle={clipIndex > 0
+											? (globalState.getSubtitleTrack.getSubtitleBefore(clipIndex) as SubtitleClip)
+											: undefined}
+									/>
 								{/each}
 							</section>
 						{/each}
