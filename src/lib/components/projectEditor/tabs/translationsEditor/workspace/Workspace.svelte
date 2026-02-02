@@ -26,6 +26,16 @@
 	let translationsState = $derived(globalState.getTranslationsState);
 	let clips = $derived(globalState.getSubtitleTrack.clips);
 
+	// Fonction pour exécuter une action avec loading
+	function withLoading(action: () => void) {
+		translationsState.isLoading = true;
+		// Utiliser setTimeout pour laisser le spinner s'afficher avant le calcul lourd
+		setTimeout(() => {
+			action();
+			setTimeout(() => { translationsState.isLoading = false; }, 50);
+		}, 10);
+	}
+
 	// Editions à afficher
 	let editionsToShowInEditor = $derived.by(() =>
 		globalState.currentProject!.content.projectTranslation.addedTranslationEditions.filter(
@@ -33,28 +43,11 @@
 		)
 	);
 
-	// Vérifie si l'index est valide (Map avec des données)
-	function isIndexValid(): boolean {
-		return (
-			translationsState.verseIndex instanceof Map && 
-			translationsState.verseIndex.size > 0 &&
-			translationsState.verseKeys.length > 0
-		);
-	}
-
-	// Construire l'index au montage si pas déjà fait ou si corrompu
+	// Toujours reconstruire l'index au montage de la page
+	// C'est rapide (~50ms pour 800 clips) et garantit que l'index est à jour
+	// même après des modifications dans d'autres onglets (split, merge, modif verset, etc.)
 	onMount(() => {
-		if (!isIndexValid() && clips.length > 0) {
-			console.log('[Workspace] Building index on mount...');
-			translationsState.rebuildIndex(clips);
-		}
-	});
-
-	// Reconstruire l'index si les clips changent
-	$effect(() => {
-		const clipCount = clips.length;
-		// Forcer la reconstruction si l'index est invalide
-		if (!isIndexValid() && clipCount > 0) {
+		if (clips.length > 0) {
 			translationsState.rebuildIndex(clips);
 		}
 	});
@@ -117,9 +110,11 @@
 	});
 
 	function goToPage(page: number) {
-		if (page >= 1 && page <= totalPages) {
-			translationsState.currentPage = page;
-			scrollToTop();
+		if (page >= 1 && page <= totalPages && page !== currentPage) {
+			withLoading(() => {
+				translationsState.currentPage = page;
+				scrollToTop();
+			});
 		}
 	}
 
@@ -130,11 +125,12 @@
 		const targetSurah = parseInt(match[1]);
 		const targetVerse = parseInt(match[2]);
 
-		// Utiliser la méthode optimisée de l'état
-		if (translationsState.goToVerse(targetSurah, targetVerse)) {
-			goToVerseInput = '';
-			scrollToTop();
-		}
+		withLoading(() => {
+			if (translationsState.goToVerse(targetSurah, targetVerse)) {
+				goToVerseInput = '';
+				scrollToTop();
+			}
+		});
 	}
 
 	// Numéros de pages visibles
@@ -219,7 +215,15 @@
 		</div>
 
 		<!-- Content -->
-		<div bind:this={contentContainer} class="flex-1 overflow-y-auto p-4 flex flex-col gap-y-3">
+		<div bind:this={contentContainer} class="flex-1 overflow-y-auto p-4 flex flex-col gap-y-3 relative">
+			{#if translationsState.isLoading}
+				<div class="absolute inset-0 bg-secondary/80 backdrop-blur-sm z-10 flex items-center justify-center">
+					<div class="flex flex-col items-center gap-3">
+						<div class="w-8 h-8 border-3 border-accent/30 border-t-accent rounded-full animate-spin"></div>
+						<span class="text-thirdly text-sm">Loading...</span>
+					</div>
+				</div>
+			{/if}
 			{#each paginatedKeys as verseKey}
 				{@const group = translationsState.getVerseGroup(verseKey)}
 				{#if group}

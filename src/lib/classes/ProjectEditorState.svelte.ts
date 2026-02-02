@@ -197,6 +197,9 @@ export class TranslationsEditorState extends SerializableBase {
 	// Indique si l'utilisateur montre les instructions pour utiliser l'IA
 	showAIInstructions: boolean = $state(false);
 
+	// État de chargement partagé pour le workspace
+	isLoading: boolean = $state(false);
+
 	// Indique le filtre actuellement appliqué dans l'éditeur de traductions
 	filters: { [statut: string]: boolean } = $state({
 		'to review': true,
@@ -223,14 +226,38 @@ export class TranslationsEditorState extends SerializableBase {
 	currentPage: number = $state(1);
 	itemsPerPage: number = 20;
 
+	/**
+	 * Change un filtre avec animation de loading
+	 */
+	setFilter(key: string, value: boolean) {
+		this.isLoading = true;
+		setTimeout(() => {
+			this.filters[key] = value;
+			this.currentPage = 1; // Reset to page 1 when filter changes
+			setTimeout(() => { this.isLoading = false; }, 50);
+		}, 10);
+	}
+
+	/**
+	 * Toggle un filtre avec animation de loading
+	 */
+	toggleFilter(key: string) {
+		this.setFilter(key, !this.filters[key]);
+	}
+
 	checkOnlyFilters(list: string[]) {
-		for (const key in this.filters) {
-			if (list.includes(key)) {
-				this.filters[key] = true;
-			} else {
-				this.filters[key] = false;
+		this.isLoading = true;
+		setTimeout(() => {
+			for (const key in this.filters) {
+				if (list.includes(key)) {
+					this.filters[key] = true;
+				} else {
+					this.filters[key] = false;
+				}
 			}
-		}
+			this.currentPage = 1; // Reset to page 1
+			setTimeout(() => { this.isLoading = false; }, 50);
+		}, 10);
 	}
 
 	/**

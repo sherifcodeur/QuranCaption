@@ -131,7 +131,8 @@
 							<input
 								type="checkbox"
 								id="filter-checkbox-{filter}"
-								bind:checked={globalState.getTranslationsState.filters[filter]}
+								checked={globalState.getTranslationsState.filters[filter]}
+								onchange={() => globalState.getTranslationsState.toggleFilter(filter)}
 								class="w-4 h-4 rounded transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-primary)] focus:ring-offset-2 focus:ring-offset-[var(--bg-accent)]"
 							/>
 							<span class="text-sm text-secondary font-medium capitalize">
