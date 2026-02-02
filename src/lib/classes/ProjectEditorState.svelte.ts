@@ -209,6 +209,20 @@ export class TranslationsEditorState extends SerializableBase {
 
 	searchQuery: string = $state('');
 
+	// === INDEX PRÉ-CALCULÉ ===
+	// Structure: { "2:142": { indices: [45, 46, 47], surah: 2, verse: 142 }, ... }
+	verseIndex: Map<string, { indices: number[]; surah: number; verse: number }> = $state(new Map());
+	
+	// Liste ordonnée des clés de versets pour la pagination
+	verseKeys: string[] = $state([]);
+	
+	// Indique si l'index a été construit
+	indexBuilt: boolean = $state(false);
+
+	// Page courante pour la pagination
+	currentPage: number = $state(1);
+	itemsPerPage: number = 20;
+
 	checkOnlyFilters(list: string[]) {
 		for (const key in this.filters) {
 			if (list.includes(key)) {
@@ -217,6 +231,71 @@ export class TranslationsEditorState extends SerializableBase {
 				this.filters[key] = false;
 			}
 		}
+	}
+
+	/**
+	 * Reconstruit l'index des versets à partir des clips.
+	 * Appelé une seule fois au chargement du projet.
+	 */
+	rebuildIndex(clips: any[]) {
+		const newIndex = new Map<string, { indices: number[]; surah: number; verse: number }>();
+		const keys: string[] = [];
+
+		for (let i = 0; i < clips.length; i++) {
+			const clip = clips[i];
+			if (clip.type === 'Subtitle') {
+				const key = `${clip.surah}:${clip.verse}`;
+				if (!newIndex.has(key)) {
+					newIndex.set(key, { indices: [], surah: clip.surah, verse: clip.verse });
+					keys.push(key);
+				}
+				newIndex.get(key)!.indices.push(i);
+			} else if (clip.type === 'Pre-defined Subtitle') {
+				// Les pre-defined subtitles ont leur propre entrée
+				const key = `predefined_${i}`;
+				newIndex.set(key, { indices: [i], surah: -1, verse: -1 });
+				keys.push(key);
+			}
+		}
+
+		this.verseIndex = newIndex;
+		this.verseKeys = keys;
+		this.indexBuilt = true;
+		console.log(`[TranslationsEditor] Index rebuilt: ${keys.length} verse groups from ${clips.length} clips`);
+	}
+
+	/**
+	 * Récupère un groupe de versets par sa clé.
+	 */
+	getVerseGroup(key: string): { indices: number[]; surah: number; verse: number } | undefined {
+		// Vérifier si verseIndex est un Map valide (peut être corrompu après désérialisation)
+		if (this.verseIndex instanceof Map) {
+			return this.verseIndex.get(key);
+		}
+		// Si c'est un objet plain (après désérialisation JSON), accéder comme un objet
+		return (this.verseIndex as any)[key];
+	}
+
+	/**
+	 * Trouve la page contenant un verset spécifique.
+	 */
+	findPageForVerse(surah: number, verse: number): number {
+		const key = `${surah}:${verse}`;
+		const index = this.verseKeys.indexOf(key);
+		if (index === -1) return 1;
+		return Math.floor(index / this.itemsPerPage) + 1;
+	}
+
+	/**
+	 * Navigue vers un verset spécifique.
+	 */
+	goToVerse(surah: number, verse: number): boolean {
+		const page = this.findPageForVerse(surah, verse);
+		if (page !== this.currentPage) {
+			this.currentPage = page;
+			return true;
+		}
+		return false;
 	}
 }
 

@@ -13,6 +13,7 @@
 	import { onDestroy } from 'svelte';
 
 	let contextMenu: ContextMenu | undefined = $state(undefined); // Initialize context menu state
+	let isLoading = $state(false); // Loading state for opening project
 
 	let {
 		projectDetail = $bindable()
@@ -38,15 +39,20 @@
 	});
 
 	async function openProjectButtonClick() {
-		// Ouvre le projet
-		globalState.currentProject = await ProjectService.load(projectDetail.id);
+		isLoading = true;
+		try {
+			// Ouvre le projet
+			globalState.currentProject = await ProjectService.load(projectDetail.id);
 
-		// Migration si besoin
-		MigrationService.FromQC313ToQC314();
-		MigrationService.FromQC326ToQC327();
+			// Migration si besoin
+			MigrationService.FromQC313ToQC314();
+			MigrationService.FromQC326ToQC327();
 
-		// Discord Rich Presence
-		discordService.setEditingState();
+			// Discord Rich Presence
+			discordService.setEditingState();
+		} finally {
+			isLoading = false;
+		}
 	}
 
 	// Gestion du menu de statut
@@ -79,8 +85,14 @@
 </script>
 
 <div
-	class="bg-secondary backdrop-blur-[10px] border border-[var(--border-color)] rounded-xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] flex flex-col justify-between hover:shadow-2xl transition-all duration-300"
+	class="bg-secondary backdrop-blur-[10px] border border-[var(--border-color)] rounded-xl shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] flex flex-col justify-between hover:shadow-2xl transition-all duration-300 relative overflow-hidden"
 >
+	{#if isLoading}
+		<div class="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex flex-col items-center justify-center gap-3">
+			<div class="loading-spinner"></div>
+			<span class="text-white text-sm font-medium">Loading project...</span>
+		</div>
+	{/if}
 	<div>
 		{#if globalState.settings!.persistentUiState.projectCardView === 'grid'}
 			<section class="w-full h-40 object-cover rounded-t-lg bg-white/80"></section>
@@ -246,5 +258,20 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	.loading-spinner {
+		width: 40px;
+		height: 40px;
+		border: 3px solid rgba(255, 255, 255, 0.3);
+		border-top-color: white;
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 </style>
