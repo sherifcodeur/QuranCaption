@@ -219,6 +219,9 @@ export class TranslationsEditorState extends SerializableBase {
 	// Liste ordonnée des clés de versets pour la pagination
 	verseKeys: string[] = $state([]);
 	
+	// Cache des clés filtrées pour éviter de recalculer à chaque page
+	filteredVerseKeys: string[] = $state([]);
+	
 	// Indique si l'index a été construit
 	indexBuilt: boolean = $state(false);
 
@@ -227,15 +230,48 @@ export class TranslationsEditorState extends SerializableBase {
 	itemsPerPage: number = 20;
 
 	/**
+	 * Reconstruit les clés filtrées. Appelé quand les filtres changent.
+	 */
+	rebuildFilteredKeys(clips: any[], editionNames: Set<string>) {
+		const filter = this.filters;
+		const search = this.searchQuery.toLowerCase().trim();
+		
+		this.filteredVerseKeys = this.verseKeys.filter((key) => {
+			const group = this.getVerseGroup(key);
+			if (!group) return false;
+
+			for (const clipIndex of group.indices) {
+				const clip = clips[clipIndex];
+				if (!clip?.translations) continue;
+
+				for (const editionName of Object.keys(clip.translations)) {
+					if (!editionNames.has(editionName)) continue;
+
+					const translation = clip.translations[editionName];
+					if (!filter[translation.status]) continue;
+
+					if (search && !translation.text.toLowerCase().includes(search)) continue;
+
+					return true;
+				}
+			}
+			return false;
+		});
+		
+		console.log(`[TranslationsEditor] Filtered: ${this.filteredVerseKeys.length} of ${this.verseKeys.length} verses`);
+	}
+
+	/**
 	 * Change un filtre avec animation de loading
 	 */
 	setFilter(key: string, value: boolean) {
 		this.isLoading = true;
 		setTimeout(() => {
 			this.filters[key] = value;
-			this.currentPage = 1; // Reset to page 1 when filter changes
-			setTimeout(() => { this.isLoading = false; }, 50);
-		}, 10);
+			this.currentPage = 1;
+			// Note: filteredVerseKeys sera recalculé par le composant
+			setTimeout(() => { this.isLoading = false; }, 100);
+		}, 50);
 	}
 
 	/**
@@ -255,9 +291,9 @@ export class TranslationsEditorState extends SerializableBase {
 					this.filters[key] = false;
 				}
 			}
-			this.currentPage = 1; // Reset to page 1
-			setTimeout(() => { this.isLoading = false; }, 50);
-		}, 10);
+			this.currentPage = 1;
+			setTimeout(() => { this.isLoading = false; }, 100);
+		}, 50);
 	}
 
 	/**

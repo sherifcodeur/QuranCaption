@@ -26,16 +26,6 @@
 	let translationsState = $derived(globalState.getTranslationsState);
 	let clips = $derived(globalState.getSubtitleTrack.clips);
 
-	// Fonction pour exécuter une action avec loading
-	function withLoading(action: () => void) {
-		translationsState.isLoading = true;
-		// Utiliser setTimeout pour laisser le spinner s'afficher avant le calcul lourd
-		setTimeout(() => {
-			action();
-			setTimeout(() => { translationsState.isLoading = false; }, 50);
-		}, 10);
-	}
-
 	// Editions à afficher
 	let editionsToShowInEditor = $derived.by(() =>
 		globalState.currentProject!.content.projectTranslation.addedTranslationEditions.filter(
@@ -43,45 +33,45 @@
 		)
 	);
 
-	// Toujours reconstruire l'index au montage de la page
-	// C'est rapide (~50ms pour 800 clips) et garantit que l'index est à jour
-	// même après des modifications dans d'autres onglets (split, merge, modif verset, etc.)
+	// Noms des éditions pour le filtrage
+	let editionNames = $derived(new Set(editionsToShowInEditor.map((e) => e.name)));
+
+	// Reconstruire l'index et les filtres au montage
 	onMount(() => {
 		if (clips.length > 0) {
 			translationsState.rebuildIndex(clips);
+			translationsState.rebuildFilteredKeys(clips, editionNames);
 		}
 	});
 
-	// Filtrage des versets visibles selon les filtres actifs (O(n) sur les verseKeys, pas sur tous les clips)
-	let filteredVerseKeys = $derived.by(() => {
-		const filter = translationsState.filters;
-		const search = translationsState.searchQuery.toLowerCase().trim();
-		const editions = editionsToShowInEditor;
-		const editionNames = new Set(editions.map((e) => e.name));
+	// Reconstruire les clés filtrées quand les filtres ou la recherche changent
+	// On surveille filters et searchQuery explicitement
+	let lastFiltersJson = '';
+	let lastSearch = '';
+	let lastEditionsJson = '';
 
-		return translationsState.verseKeys.filter((key) => {
-			const group = translationsState.getVerseGroup(key);
-			if (!group) return false;
+	$effect(() => {
+		const currentFiltersJson = JSON.stringify(translationsState.filters);
+		const currentSearch = translationsState.searchQuery;
+		const currentEditionsJson = JSON.stringify([...editionNames]);
 
-			// Vérifie si au moins un clip du groupe passe les filtres
-			for (const clipIndex of group.indices) {
-				const clip = clips[clipIndex] as ClipWithTranslation;
-				if (!clip.translations) continue;
+		if (
+			currentFiltersJson !== lastFiltersJson ||
+			currentSearch !== lastSearch ||
+			currentEditionsJson !== lastEditionsJson
+		) {
+			lastFiltersJson = currentFiltersJson;
+			lastSearch = currentSearch;
+			lastEditionsJson = currentEditionsJson;
 
-				for (const editionName of Object.keys(clip.translations)) {
-					if (!editionNames.has(editionName)) continue;
-
-					const translation = clip.translations[editionName];
-					if (!filter[translation.status]) continue;
-
-					if (search && !translation.text.toLowerCase().includes(search)) continue;
-
-					return true; // Au moins une traduction passe les filtres
-				}
+			if (clips.length > 0 && translationsState.verseKeys.length > 0) {
+				translationsState.rebuildFilteredKeys(clips, editionNames);
 			}
-			return false;
-		});
+		}
 	});
+
+	// Utiliser le cache de clés filtrées
+	let filteredVerseKeys = $derived(translationsState.filteredVerseKeys);
 
 	// Pagination
 	let totalPages = $derived(Math.ceil(filteredVerseKeys.length / translationsState.itemsPerPage));
@@ -111,10 +101,14 @@
 
 	function goToPage(page: number) {
 		if (page >= 1 && page <= totalPages && page !== currentPage) {
-			withLoading(() => {
+			translationsState.isLoading = true;
+			setTimeout(() => {
 				translationsState.currentPage = page;
 				scrollToTop();
-			});
+				setTimeout(() => {
+					translationsState.isLoading = false;
+				}, 100);
+			}, 50);
 		}
 	}
 
@@ -125,12 +119,16 @@
 		const targetSurah = parseInt(match[1]);
 		const targetVerse = parseInt(match[2]);
 
-		withLoading(() => {
+		translationsState.isLoading = true;
+		setTimeout(() => {
 			if (translationsState.goToVerse(targetSurah, targetVerse)) {
 				goToVerseInput = '';
 				scrollToTop();
 			}
-		});
+			setTimeout(() => {
+				translationsState.isLoading = false;
+			}, 100);
+		}, 50);
 	}
 
 	// Numéros de pages visibles
@@ -215,11 +213,18 @@
 		</div>
 
 		<!-- Content -->
-		<div bind:this={contentContainer} class="flex-1 overflow-y-auto p-4 flex flex-col gap-y-3 relative">
+		<div
+			bind:this={contentContainer}
+			class="flex-1 overflow-y-auto p-4 flex flex-col gap-y-3 relative"
+		>
 			{#if translationsState.isLoading}
-				<div class="absolute inset-0 bg-secondary/80 backdrop-blur-sm z-10 flex items-center justify-center">
+				<div
+					class="absolute inset-0 bg-secondary/80 backdrop-blur-sm z-10 flex items-center justify-center"
+				>
 					<div class="flex flex-col items-center gap-3">
-						<div class="w-8 h-8 border-3 border-accent/30 border-t-accent rounded-full animate-spin"></div>
+						<div
+							class="w-8 h-8 border-3 border-accent/30 border-t-accent rounded-full animate-spin"
+						></div>
 						<span class="text-thirdly text-sm">Loading...</span>
 					</div>
 				</div>
@@ -227,7 +232,9 @@
 			{#each paginatedKeys as verseKey (verseKey)}
 				{@const group = translationsState.getVerseGroup(verseKey)}
 				{#if group}
-					{@const firstClipInGroup = clips[group.indices[0]] as SubtitleClip | PredefinedSubtitleClip}
+					{@const firstClipInGroup = clips[group.indices[0]] as
+						| SubtitleClip
+						| PredefinedSubtitleClip}
 					<div class="border border-color rounded px-4 py-4 text-primary relative space-y-7">
 						{#if firstClipInGroup instanceof SubtitleClip}
 							<div
