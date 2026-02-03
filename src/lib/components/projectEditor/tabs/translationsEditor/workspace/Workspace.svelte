@@ -44,6 +44,26 @@
 		}
 	});
 
+	// Surveiller les changements de clips (split, ajout, suppression)
+	// et reconstruire l'index quand nécessaire
+	let lastClipsLength = 0;
+	let lastClipsSignature = '';
+	
+	$effect(() => {
+		// Créer une signature basée sur le nombre de clips et leurs versets
+		const clipsSignature = clips.map(c => c.type === 'Subtitle' ? `${c.surah}:${c.verse}:${c.startWordIndex}` : c.type).join('|');
+		
+		if (clips.length !== lastClipsLength || clipsSignature !== lastClipsSignature) {
+			lastClipsLength = clips.length;
+			lastClipsSignature = clipsSignature;
+			
+			if (clips.length > 0) {
+				translationsState.rebuildIndex(clips);
+				translationsState.rebuildFilteredKeys(clips, editionNames);
+			}
+		}
+	});
+
 	// Reconstruire les clés filtrées quand les filtres ou la recherche changent
 	// On surveille filters et searchQuery explicitement
 	let lastFiltersJson = '';
