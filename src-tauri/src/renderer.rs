@@ -144,7 +144,7 @@ impl VideoDecoder {
         // 2. Blur if needed
         if blur > 0.1 {
             // Use boxblur for performance. Radius is roughly proportional to blur value.
-            filters.push_str(&format!(",boxblur={}:1", (blur * 10.0) as u32));
+            filters.push_str(&format!(",boxblur={}:1", blur as u32));
         }
 
         // 3. Tint (Overlay) if needed
