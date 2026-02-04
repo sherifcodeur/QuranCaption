@@ -378,8 +378,7 @@
 					chunkIndex: i,
 					blur: globalState.getStyle('global', 'overlay-blur')!.value as number,
 					overlayColor: globalState.getStyle('global', 'overlay-color')!.value as string,
-					overlayOpacity:
-						(globalState.getStyle('global', 'overlay-opacity')!.value as number) / 100,
+					overlayOpacity: globalState.getStyle('global', 'overlay-opacity')!.value as number,
 					overlayEnable: globalState.getStyle('global', 'overlay-enable')!.value as boolean,
 					isHighFidelity: hasCustomClips
 				});
@@ -692,6 +691,9 @@
 				durationMs: Math.round(totalDuration),
 				chunkIndex: null,
 				blur: globalState.getStyle('global', 'overlay-blur')!.value as number,
+				overlayColor: globalState.getStyle('global', 'overlay-color')!.value as string,
+				overlayOpacity: globalState.getStyle('global', 'overlay-opacity')!.value as number,
+				overlayEnable: globalState.getStyle('global', 'overlay-enable')!.value as boolean,
 				isHighFidelity: globalState.getCustomClipTrack?.clips.length > 0
 			});
 		} catch (e: any) {
