@@ -16,6 +16,10 @@ export type AutoSegmentationSettings = {
 	includeWordByWord: boolean; // If true, request word-by-word timestamps.
 };
 
+export type AITranslationSettings = {
+	omitPromptPrefix: boolean; // If true, only include JSON input in the prompt.
+};
+
 export default class Settings extends SerializableBase {
 	private static settingsFile: string = 'settings.json';
 
@@ -54,6 +58,11 @@ export default class Settings extends SerializableBase {
 		whisperModel: 'base',
 		fillBySilence: true,
 		includeWordByWord: false
+	});
+
+
+	aiTranslationSettings = $state<AITranslationSettings>({
+		omitPromptPrefix: false
 	});
 
 	// Shortcut categories metadata
