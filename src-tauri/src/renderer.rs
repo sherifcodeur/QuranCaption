@@ -64,6 +64,12 @@ enum DecoderSource {
         /// Pre-computed frame buffer (reused for each read_frame call)
         frame_buffer: Vec<u8>,
     },
+    /// Pre-processed static image (captured from DOM with blur/overlay applied)
+    /// No FFmpeg needed - just clone the buffer for each frame
+    PreProcessed {
+        /// Pre-computed frame buffer from frontend (with blur/overlay already applied)
+        frame_buffer: Vec<u8>,
+    },
 }
 
 pub struct VideoDecoder {
@@ -82,8 +88,26 @@ impl VideoDecoder {
         duration_s: f64,
         blur: f64,
         overlay_color: &str, 
-        overlay_opacity: f64
+        overlay_opacity: f64,
+        processed_buffer: Option<Vec<u8>>,  // NOUVEAU: Buffer pré-processé depuis le frontend
     ) -> Result<Self, String> {
+        
+        // ========== ÉTAPE 1: Vérifier si on a un buffer pré-processé ==========
+        // Si le frontend a déjà capturé et processé l'image avec blur/overlay,
+        // on l'utilise directement sans passer par FFmpeg
+        if let Some(buffer) = processed_buffer {
+            println!("[VideoDecoder] Using PRE-PROCESSED background buffer ({} bytes) - NO FFmpeg!", buffer.len());
+            println!("[VideoDecoder] ✅ Optimization active: image processed ONCE instead of {} times", 
+                     (duration_s * fps as f64) as u32);
+            
+            return Ok(Self {
+                width,
+                height,
+                source: DecoderSource::PreProcessed {
+                    frame_buffer: buffer,
+                },
+            });
+        }
         
         // Check if this is a synthetic background (solid color)
         if path.starts_with("synthetic:") {
@@ -218,6 +242,12 @@ impl VideoDecoder {
                 // This is much faster than FFmpeg generating frames
                 Ok(frame_buffer.clone())
             },
+            DecoderSource::PreProcessed { frame_buffer } => {
+                // Return a clone of the pre-processed buffer from frontend
+                // Image was already processed with blur/overlay in the browser
+                // This is MUCH faster than FFmpeg processing for every frame
+                Ok(frame_buffer.clone())
+            },
             DecoderSource::Ffmpeg { reader, .. } => {
                 let frame_size = (self.width * self.height * 4) as usize;
                 let mut buffer = vec![0u8; frame_size];
@@ -246,6 +276,9 @@ impl Drop for VideoDecoder {
             },
             DecoderSource::Synthetic { .. } => {
                 println!("[VideoDecoder] Dropped synthetic decoder (no process to kill)");
+            },
+            DecoderSource::PreProcessed { .. } => {
+                println!("[VideoDecoder] Dropped pre-processed decoder (no process to kill)");
             }
         }
     }

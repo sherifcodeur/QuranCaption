@@ -223,7 +223,9 @@
 				const resumeState: ResumeState = JSON.parse(resumeStateJson);
 				// Vérifier que c'est bien le même export
 				if (resumeState.exportId === exportId) {
-					console.log(`🔄 Resuming export from chunk ${resumeState.currentChunkIndex}/${resumeState.totalChunks}`);
+					console.log(
+						`🔄 Resuming export from chunk ${resumeState.currentChunkIndex}/${resumeState.totalChunks}`
+					);
 					CHUNK_DURATION = resumeState.chunkDuration;
 					await resumeExportChunked(resumeState);
 					return;
@@ -296,15 +298,30 @@
 		} as ExportProgress);
 
 		// Process only the first chunk, then reload for memory cleanup
-		await processChunk(0, chunkInfo.chunks, generatedVideoFiles, totalChunks, exportStart, exportEnd, totalDuration, isHighFidelity);
+		await processChunk(
+			0,
+			chunkInfo.chunks,
+			generatedVideoFiles,
+			totalChunks,
+			exportStart,
+			exportEnd,
+			totalDuration,
+			isHighFidelity
+		);
 	}
 
 	// ============ RESUME EXPORT FROM SAVED STATE ============
 	async function resumeExportChunked(resumeState: ResumeState) {
-		const chunkInfo = calculateChunksWithFadeOut(resumeState.exportStart, resumeState.exportEnd, resumeState.isHighFidelity);
+		const chunkInfo = calculateChunksWithFadeOut(
+			resumeState.exportStart,
+			resumeState.exportEnd,
+			resumeState.isHighFidelity
+		);
 		const generatedVideoFiles = resumeState.generatedVideoFiles;
 
-		console.log(`🔄 Resuming from chunk ${resumeState.currentChunkIndex}, already completed: ${generatedVideoFiles.length} files`);
+		console.log(
+			`🔄 Resuming from chunk ${resumeState.currentChunkIndex}, already completed: ${generatedVideoFiles.length} files`
+		);
 
 		// Continue from the current chunk
 		await processChunk(
@@ -361,6 +378,14 @@
 			const timings = calculateTimingsForRange(chunk.start, chunk.end, !hasCustomClips);
 
 			try {
+				// ========== OPTIMISATION: Capturer le background processé UNE FOIS PAR CHUNK ==========
+				// Après chaque reload de page, on recapture l'image avec blur/overlay
+				// Cela évite à FFmpeg de reprocesser la même image pour chaque frame
+				const processedBg = await captureProcessedBackground();
+				if (processedBg) {
+					console.log(`[ChunkedExport] ✅ Chunk ${i}: Using optimized pre-processed background`);
+				}
+
 				await invoke('start_streaming_export', {
 					exportId: exportId,
 					outPath: chunkFinalFilePath,
@@ -380,7 +405,9 @@
 					overlayColor: globalState.getStyle('global', 'overlay-color')!.value as string,
 					overlayOpacity: globalState.getStyle('global', 'overlay-opacity')!.value as number,
 					overlayEnable: globalState.getStyle('global', 'overlay-enable')!.value as boolean,
-					isHighFidelity: hasCustomClips
+					isHighFidelity: hasCustomClips,
+					// NOUVEAU: Passer le buffer pré-processé (ou null si vidéo/pas d'image)
+					processedBackgroundBuffer: processedBg ? Array.from(processedBg) : null
 				});
 			} catch (e: any) {
 				console.error('Error starting export chunk:', e);
@@ -428,15 +455,14 @@
 					};
 					localStorage.setItem(RESUME_KEY, JSON.stringify(resumeState));
 					console.log(`💾 Saved resume state for chunk ${i + 1}, reloading for memory cleanup...`);
-					
+
 					// Give a moment for localStorage to persist
-					await new Promise(resolve => setTimeout(resolve, 500));
-					
+					await new Promise((resolve) => setTimeout(resolve, 500));
+
 					// Reload the page to free WebView memory
 					window.location.reload();
 					return; // Exit, reload will resume from next chunk
 				}
-
 			} catch (e) {
 				console.error(`Error processing chunk ${i}:`, e);
 				localStorage.removeItem(RESUME_KEY); // Clear resume state on error
@@ -470,7 +496,6 @@
 
 		await finalCleanup();
 	}
-
 
 	async function streamFramesForChunk(
 		chunkIndex: number | null,
@@ -675,6 +700,14 @@
 		} as ExportProgress);
 
 		try {
+			// ========== OPTIMISATION: Capturer le background processé UNE SEULE FOIS ==========
+			// Si c'est une image statique, on la capture avec blur/overlay appliqués
+			// Cela évite à FFmpeg de reprocesser la même image pour chaque frame
+			const processedBg = await captureProcessedBackground();
+			if (processedBg) {
+				console.log('[NormalExport] ✅ Using optimized pre-processed background');
+			}
+
 			await invoke('start_streaming_export', {
 				exportId: exportId,
 				outPath: exportData!.finalFilePath,
@@ -694,7 +727,9 @@
 				overlayColor: globalState.getStyle('global', 'overlay-color')!.value as string,
 				overlayOpacity: globalState.getStyle('global', 'overlay-opacity')!.value as number,
 				overlayEnable: globalState.getStyle('global', 'overlay-enable')!.value as boolean,
-				isHighFidelity: globalState.getCustomClipTrack?.clips.length > 0
+				isHighFidelity: globalState.getCustomClipTrack?.clips.length > 0,
+				// NOUVEAU: Passer le buffer pré-processé (ou null si vidéo/pas d'image)
+				processedBackgroundBuffer: processedBg ? Array.from(processedBg) : null
 			});
 		} catch (e: any) {
 			console.error('Error starting normal export:', e);
@@ -749,6 +784,95 @@
 			console.warn('Could not remove temporary folder:', e);
 		}
 		getCurrentWebviewWindow().close();
+	}
+
+	/**
+	 * Capture le background (image statique) avec blur et overlay appliqués
+	 * Utilise Canvas API pour reproduire exactement le rendu CSS de la preview
+	 *
+	 * @returns Buffer RGBA de l'image processée, ou null si c'est une vidéo
+	 */
+	async function captureProcessedBackground(): Promise<Uint8Array | null> {
+		// ========== ÉTAPE 1: Vérifier si c'est une image statique ==========
+		// Si on a des clips vidéo, on ne peut pas optimiser (le background change à chaque frame)
+		const videos = globalState.getVideoTrack?.clips || [];
+		if (videos.length > 0) {
+			console.log('[CaptureBackground] Video background detected, skipping optimization');
+			return null; // Retourner null = utiliser FFmpeg normalement
+		}
+
+		// ========== ÉTAPE 2: Récupérer l'image de fond ==========
+		// Trouver l'élément <img> dans la preview (si c'est une image statique)
+		const imgElement = document.querySelector('#preview img') as HTMLImageElement;
+		if (!imgElement || !imgElement.src) {
+			console.log('[CaptureBackground] No background image found in DOM');
+			return null;
+		}
+
+		console.log('[CaptureBackground] Static image detected, capturing with blur/overlay...');
+
+		// ========== ÉTAPE 3: Créer un canvas aux dimensions d'export ==========
+		const canvas = document.createElement('canvas');
+		const ctx = canvas.getContext('2d')!;
+		canvas.width = exportData!.videoDimensions.width;
+		canvas.height = exportData!.videoDimensions.height;
+
+		// ========== ÉTAPE 4: Charger et dessiner l'image ==========
+		const img = new Image();
+		img.src = imgElement.src; // Utiliser le src de l'élément img déjà chargé
+
+		// Attendre que l'image soit chargée
+		await new Promise((resolve, reject) => {
+			img.onload = resolve;
+			img.onerror = reject;
+		});
+
+		// Dessiner l'image (object-cover CSS = remplir tout le canvas)
+		ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+		// ========== ÉTAPE 5: Appliquer le blur (si activé) ==========
+		const blur = globalState.getStyle('global', 'overlay-blur')!.value as number;
+		if (blur > 0) {
+			console.log(`[CaptureBackground] Applying blur: ${blur}px`);
+
+			// Appliquer le filtre blur CSS
+			ctx.filter = `blur(${blur}px)`;
+
+			// Créer un canvas temporaire pour appliquer le blur
+			const tempCanvas = document.createElement('canvas');
+			tempCanvas.width = canvas.width;
+			tempCanvas.height = canvas.height;
+			tempCanvas.getContext('2d')!.drawImage(canvas, 0, 0);
+
+			// Redessiner avec le blur appliqué
+			ctx.drawImage(tempCanvas, 0, 0);
+			ctx.filter = 'none'; // Reset le filtre
+		}
+
+		// ========== ÉTAPE 6: Appliquer l'overlay (si activé) ==========
+		const overlayEnable = globalState.getStyle('global', 'overlay-enable')!.value as boolean;
+		if (overlayEnable) {
+			const color = globalState.getStyle('global', 'overlay-color')!.value as string;
+			const opacity = globalState.getStyle('global', 'overlay-opacity')!.value as number;
+
+			console.log(`[CaptureBackground] Applying overlay: ${color} @ ${opacity}`);
+
+			// Dessiner un rectangle coloré avec opacité
+			ctx.fillStyle = color;
+			ctx.globalAlpha = opacity;
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			ctx.globalAlpha = 1.0; // Reset l'opacité
+		}
+
+		// ========== ÉTAPE 7: Extraire les bytes RGBA ==========
+		const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+		const bytes = new Uint8Array(imageData.data);
+
+		console.log(
+			`[CaptureBackground] ✅ Captured ${bytes.length} bytes (${canvas.width}x${canvas.height} RGBA)`
+		);
+
+		return bytes;
 	}
 
 	async function captureFrameRaw(): Promise<Uint8Array | null> {

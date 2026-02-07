@@ -1354,8 +1354,10 @@ pub async fn export_video(
         None, // overlay_opacity
         None, // overlay_enable
         is_high_fidelity,
+        None, // processed_background_buffer - pas de buffer pré-processé pour l'ancienne API
         app_handle,
     ).await.map_err(|e| format!("WGPU Export error: {}", e))?;
+
     
     let export_time_s = t0.elapsed().as_secs_f64();
     *LAST_EXPORT_TIME_S.lock().unwrap() = Some(export_time_s);
@@ -1660,8 +1662,11 @@ pub async fn start_streaming_export(
     overlay_opacity: Option<f64>,
     overlay_enable: Option<bool>,
     is_high_fidelity: bool,
+    // NOUVEAU: Buffer pré-processé depuis le frontend (avec blur/overlay déjà appliqués)
+    processed_background_buffer: Option<Vec<u8>>,
     _app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+
     let (w, h) = target_size;
     
     // 1. Resolve background video
@@ -1678,19 +1683,22 @@ pub async fn start_streaming_export(
     let duration_s = duration_ms.unwrap_or(0) as f64 / 1000.0;
     
     println!("[start_streaming_export] Initializing Decoder...");
+    
+    // Si on a un buffer pré-processé du frontend, on l'affiche pour debug
+    if processed_background_buffer.is_some() {
+        println!("[start_streaming_export] ✅ Using PRE-PROCESSED background buffer from frontend!");
+    }
+    
     let decoder = crate::renderer::VideoDecoder::new(
         bg_path, w as u32, h as u32, fps as u32, start_time_ms as u32, 
-        duration_s, // Add duration here
+        duration_s,
         blur_val, 
-        // We do NOT pass overlay info to Decoder anymore (FFmpeg tint removed)
-        // &color_val, opacity_val. 
-        // Update VideoDecoder::new signature in renderer.rs first? 
-        // No, I need to match the signature I see in renderer.rs.
-        // Wait, I haven't updated VideoDecoder::new signature in renderer.rs yet to REMOVE them.
-        // Step 1865 showed VideoDecoder::new TAKES overlay_color/opacity.
-        // I should pass empty/zero to VideoDecoder to disable FFmpeg tint.
-        "", 0.0
+        // On ne passe plus overlay_color/opacity à FFmpeg car le frontend les a déjà appliqués
+        "", 0.0,
+        // NOUVEAU: Passer le buffer pré-processé (si fourni par le frontend)
+        processed_background_buffer
     ).map_err(|e| e.to_string())?;
+
     
     // Setup codec and params based on prefer_hw
     let ffmpeg_bin = resolve_ffmpeg_binary();
