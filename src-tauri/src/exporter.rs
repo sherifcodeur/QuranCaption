@@ -1685,7 +1685,8 @@ pub async fn start_streaming_export(
     println!("[start_streaming_export] Initializing Decoder...");
     
     // Si on a un buffer pré-processé du frontend, on l'affiche pour debug
-    if processed_background_buffer.is_some() {
+    let has_processed_buffer = processed_background_buffer.is_some();
+    if has_processed_buffer {
         println!("[start_streaming_export] ✅ Using PRE-PROCESSED background buffer from frontend!");
     }
     
@@ -1719,6 +1720,15 @@ pub async fn start_streaming_export(
     ).map_err(|e| e.to_string())?;
 
     // 3. Store in session
+    // Overlay logic:
+    // - If processed_background_buffer is present (static image), overlay is ALREADY baked in -> use 0.0 opacity here to avoid double overlay
+    // - If processed_background_buffer is None (video), we need WGPU to render overlay -> use opacity with -10% correction for gamma match
+    let final_overlay_opacity = if has_processed_buffer {
+        0.0
+    } else {
+        (opacity_val * 0.5) as f32
+    };
+
     let session = Arc::new(WgpuStreamingSession {
         renderer: Arc::new(TokioMutex::new(renderer)),
         decoder: Arc::new(TokioMutex::new(decoder)),
@@ -1728,7 +1738,7 @@ pub async fn start_streaming_export(
         is_high_fidelity,
         overlay_enable: overlay_enable.unwrap_or(false),
         overlay_color: color_val,
-        overlay_opacity: opacity_val as f32,
+        overlay_opacity: final_overlay_opacity,
     });
 
     println!("[start_streaming_export] Storing Session...");
