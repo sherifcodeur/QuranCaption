@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { PredefinedSubtitleClip, VerseRange, type AssetClip } from '$lib/classes';
+	import { PredefinedSubtitleClip, VerseRange, type AssetClip, AssetType } from '$lib/classes';
 	import Timeline from '$lib/components/projectEditor/timeline/Timeline.svelte';
 	import VideoPreview from '$lib/components/projectEditor/videoPreview/VideoPreview.svelte';
 	import { globalState } from '$lib/runes/main.svelte';
 	import { ProjectService } from '$lib/services/ProjectService';
-	import { invoke } from '@tauri-apps/api/core';
+	import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
@@ -793,39 +793,80 @@
 	 * @returns Buffer RGBA de l'image processée, ou null si c'est une vidéo
 	 */
 	async function captureProcessedBackground(): Promise<Uint8Array | null> {
-		// ========== ÉTAPE 1: Vérifier si c'est une image statique ==========
-		// Si on a des clips vidéo, on ne peut pas optimiser (le background change à chaque frame)
-		const videos = globalState.getVideoTrack?.clips || [];
-		if (videos.length > 0) {
-			console.log('[CaptureBackground] Video background detected, skipping optimization');
-			return null; // Retourner null = utiliser FFmpeg normalement
-		}
+		// ========== ÉTAPE 1: Vérifier le contenu de la piste vidéo ==========
+		const videoClips = globalState.getVideoTrack?.clips || [];
+		let imagePathToLoad: string | null = null;
 
-		// ========== ÉTAPE 2: Récupérer l'image de fond ==========
-		// Trouver l'élément <img> dans la preview (si c'est une image statique)
-		const imgElement = document.querySelector('#preview img') as HTMLImageElement;
-		if (!imgElement || !imgElement.src) {
-			console.log('[CaptureBackground] No background image found in DOM');
+		// Cas 1: Piste vide -> C'est une image de fond statique (Solid Color ou rien) -> Optimisation possible via DOM
+		if (videoClips.length === 0) {
+			// On continue vers l'étape 2 (DOM Scraping)
+		}
+		// Cas 2: Un seul clip ET c'est une image -> Optimisation possible via chargement direct
+		else if (videoClips.length === 1) {
+			const clip = videoClips[0];
+			// On vérifie si c'est un AssetClip et si c'est une image
+			if (clip.type === 'Asset') {
+				const asset = globalState.currentProject?.content.getAssetById((clip as any).assetId);
+				if (asset && asset.type === AssetType.Image) {
+					console.log('[CaptureBackground] Single static image detected on video track. Optimizing...');
+					imagePathToLoad = asset.filePath;
+				} else {
+					console.log('[CaptureBackground] Video clip detected, skipping optimization (Backend fallback)');
+					return null;
+				}
+			} else if (clip.type === 'Custom Image') {
+				// Gestion des Custom Images si nécessaire (pour l'instant on skip)
+				console.log('[CaptureBackground] Custom Image clip detected, skipping optimization');
+				return null;
+			} else {
+				console.log('[CaptureBackground] Non-image clip detected, skipping optimization');
+				return null;
+			}
+		}
+		// Cas 3: Plusieurs clips ou Vidéos -> Pas d'optimisation
+		else {
+			console.log('[CaptureBackground] Multiple clips or video detected, skipping optimization');
 			return null;
 		}
 
-		console.log('[CaptureBackground] Static image detected, capturing with blur/overlay...');
-
-		// ========== ÉTAPE 3: Créer un canvas aux dimensions d'export ==========
+		// ========== ÉTAPE 2: Préparer le Canvas ==========
+		// ========== ÉTAPE 2: Préparer le Canvas ==========
 		const canvas = document.createElement('canvas');
 		const ctx = canvas.getContext('2d')!;
 		canvas.width = exportData!.videoDimensions.width;
 		canvas.height = exportData!.videoDimensions.height;
 
-		// ========== ÉTAPE 4: Charger et dessiner l'image ==========
-		const img = new Image();
-		img.src = imgElement.src; // Utiliser le src de l'élément img déjà chargé
 
-		// Attendre que l'image soit chargée
-		await new Promise((resolve, reject) => {
+		// ========== ÉTAPE 3: Charger l'image (DOM ou Fichier) ==========
+		const img = new Image();
+		img.crossOrigin = 'anonymous';
+
+
+		// On prépare la promesse de chargement avant de définir src
+		const imageLoadedPromise = new Promise((resolve, reject) => {
 			img.onload = resolve;
 			img.onerror = reject;
 		});
+
+		if (imagePathToLoad) {
+			// Cas Image sur Piste Vidéo : Charger depuis le fichier
+			img.src = convertFileSrc(imagePathToLoad);
+		} else {
+			// Cas Fond Statique (DOM)
+			const imgElement = document.querySelector('#preview img') as HTMLImageElement;
+			if (!imgElement || !imgElement.src) {
+				console.log('[CaptureBackground] No background image found in DOM (Solid color?)');
+				// Si pas d'image, on retourne null pour laisser le backend gérer (ex: Solid Color)
+				return null;
+			}
+			img.src = imgElement.src;
+		}
+
+		console.log('[CaptureBackground] Static image detected, capturing with blur/overlay...');
+
+		// Attendre que l'image soit chargée via la promesse créée plus tôt
+		await imageLoadedPromise;
+
 
 		// Dessiner l'image (object-cover CSS = remplir tout le canvas)
 		ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
