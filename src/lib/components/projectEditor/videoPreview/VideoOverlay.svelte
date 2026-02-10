@@ -515,7 +515,7 @@
 						edition
 					]}
 
-					{#if globalState.getVideoStyle.doesTargetStyleExist(edition)}
+					{#if globalState.getVideoStyle.doesTargetStyleExist(edition) && subtitleOpacity(edition) > 0}
 						<p
 							ondblclick={() => {
 								globalState.getVideoStyle.highlightCategory(
