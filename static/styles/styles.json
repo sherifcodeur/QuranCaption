@@ -184,6 +184,34 @@
 		]
 	},
 	{
+		"id": "names-render",
+		"name": "Names Render",
+		"description": "Specific rendering and styling for Holy Names",
+		"icon": "auto_fix_high",
+		"styles": [
+			{
+				"id": "allah-word-color-enable",
+				"name": "Color 'Allah' Word",
+				"description": "Enable specific coloring for the word 'Allah' (الله)",
+				"value": false,
+				"valueType": "boolean",
+				"css": "",
+				"tailwind": false,
+				"icon": "brush"
+			},
+			{
+				"id": "allah-word-color",
+				"name": "'Allah' Word Color",
+				"description": "Color for the word 'Allah' (الله)",
+				"value": "#facc15",
+				"valueType": "color",
+				"css": "--allah-word-color: {value};",
+				"tailwind": false,
+				"icon": "palette"
+			}
+		]
+	},
+	{
 		"id": "positioning",
 		"name": "Position & Layout",
 		"description": "Control the position and spacing of subtitles on screen",

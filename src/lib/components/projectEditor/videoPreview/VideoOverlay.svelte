@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { CustomTextClip, ProjectEditorTabs, SubtitleClip, Translation } from '$lib/classes';
+	import { CustomTextClip, ProjectEditorTabs, SubtitleClip, Translation, ClipWithTranslation } from '$lib/classes';
 	import type { StyleCategoryName } from '$lib/classes/VideoStyle.svelte';
 	import { globalState } from '$lib/runes/main.svelte';
 	import { mouseDrag } from '$lib/services/verticalDrag';
-	import { untrack } from 'svelte';
+	import { untrack, onMount } from 'svelte';
 	import ReciterName from '../tabs/styleEditor/ReciterName.svelte';
 	import SurahName from '../tabs/styleEditor/SurahName.svelte';
 	import VerseNumber from '../tabs/styleEditor/VerseNumber.svelte';
@@ -65,7 +65,7 @@
 	});
 
 	let currentSubtitleTranslations = $derived(() => {
-		const subtitle = currentSubtitle();
+		const subtitle = currentSubtitle() as ClipWithTranslation;
 		if (!subtitle) return [];
 		return subtitle.translations;
 	});
@@ -437,6 +437,57 @@
 			customCSS: globalState.getStyle('global', 'overlay-custom-css')!.value
 		};
 	});
+
+	let allahWordColorEnabled = $derived(() => {
+		const s = globalState.getStyle('arabic', 'allah-word-color-enable');
+		return s && s.value;
+	});
+
+	let namesIndex = $state<any>(null);
+
+	onMount(async () => {
+		try {
+			const response = await fetch('/names-index.json');
+			namesIndex = await response.json();
+		} catch (e) {
+			console.error('Failed to load names-index.json', e);
+		}
+	});
+
+	function formatArabicText(text: string, surah?: number, verse?: number, startWordIndex: number = 0) {
+		if (!allahWordColorEnabled() || !namesIndex || !surah || !verse) return text;
+
+		// On regarde dans l'index si on a des mots à colorier pour ce verset
+		let wordIndices: number[] = [];
+
+		// Check spécifique à la sourate
+		if (namesIndex[surah] && namesIndex[surah][verse]) {
+			wordIndices = namesIndex[surah][verse];
+		}
+		// Check "any" (pour toutes les sourates)
+		else if (namesIndex['any'] && namesIndex['any'][verse]) {
+			wordIndices = namesIndex['any'][verse];
+		}
+
+		if (wordIndices.length === 0) return text;
+
+		// Découpage par mots (espaces)
+		const words = text.split(' ');
+
+		return words
+			.map((word, index) => {
+				// Position réelle du mot dans le verset
+				const wordPos = index + startWordIndex + 1; // 1-indexed
+				if (wordIndices.includes(wordPos)) {
+					// dir="rtl" + &rlm; (Right-to-Left Mark \u200F)
+					// L'ajout de &rlm; avant et après assure que le navigateur reste en mode RTL
+					// même s'il considère les caractères PUA comme neutres.
+					return `&rlm;<span dir="rtl" style="color: var(--allah-word-color)">${word}</span>&rlm;`;
+				}
+				return word;
+			})
+			.join(' ');
+	}
 </script>
 
 <div class="inset-0 absolute" style="" id="overlay">
@@ -501,12 +552,18 @@
 						class={'arabic absolute subtitle select-none z-10 ' +
 							getTailwind('arabic') +
 							helperStyles('arabic')}
+						dir="rtl"
 						style="opacity: {subtitleOpacity('arabic')}; {getCss('arabic', subtitle.id, [
 							'background',
 							'border'
 						])};"
 					>
-						{subtitle.getText()}
+						{@html formatArabicText(
+							(subtitle as ClipWithTranslation).getText(),
+							(subtitle as any).surah,
+							(subtitle as any).verse,
+							(subtitle as any).startWordIndex
+						)}
 					</p>
 				{/if}
 

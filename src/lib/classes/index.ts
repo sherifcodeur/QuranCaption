@@ -12,6 +12,7 @@ export { Timeline } from './Timeline.svelte.js';
 export { Track } from './Track.svelte.js';
 export {
 	Clip,
+	ClipWithTranslation,
 	AssetClip,
 	SubtitleClip,
 	PredefinedSubtitleClip,

@@ -88,10 +88,12 @@ export class ProjectService {
 		const project = Project.fromJSON(projectData);
 
 		// Si le projet ne contient pas de styles vidéo, on initialise avec un style par défaut
-		// || true
 		if (Object.keys(project.content.videoStyle.styles).length === 0) {
 			// Si les styles ne sont pas définis, on initialise avec un style par défaut
 			project.content.videoStyle = await VideoStyle.getDefaultVideoStyle();
+		} else {
+			// Sinon on synchronise les styles avec les fichiers JSON (pour ajouter les nouvelles catégories/styles)
+			await project.content.videoStyle.syncWithDefaultStyles();
 		}
 
 		return project;

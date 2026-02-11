@@ -39,7 +39,8 @@ export type StyleCategoryName =
 	| 'surah-name'
 	| 'reciter-name'
 	| 'verse-number'
-	| 'creator-text';
+	| 'creator-text'
+	| 'names-render';
 
 // Types spécifiques pour chaque catégorie de styles
 export type GeneralStyleName =
@@ -66,7 +67,9 @@ export type TextStyleName =
 	| 'line-height'
 	| 'max-height'
 	| 'reactive-font-size'
-	| 'reactive-y-position';
+	| 'reactive-y-position'
+	| 'allah-word-color-enable'
+	| 'allah-word-color';
 
 export type PositioningStyleName =
 	| 'vertical-position'
@@ -343,6 +346,29 @@ export class StylesData extends SerializableBase {
 		this.categories = (categories || []).map((c: any) =>
 			c instanceof Category ? c : new Category(c)
 		);
+	}
+
+	/**
+	 * Synchronise les catégories actuelles avec de nouvelles catégories par défaut.
+	 * Ajoute les catégories manquantes et les styles manquants dans les catégories existantes.
+	 */
+	syncWithDefaultCategories(defaultCategories: any[]) {
+		for (const defaultCat of defaultCategories) {
+			let existingCat = this.categories.find((c) => c.id === defaultCat.id);
+
+			if (!existingCat) {
+				// La catégorie entière manque, on l'ajoute
+				this.categories.push(new Category(defaultCat));
+			} else {
+				// La catégorie existe, on vérifie si des styles manquent
+				for (const defaultStyle of defaultCat.styles) {
+					const existingStyle = existingCat.styles.find((s) => s.id === defaultStyle.id);
+					if (!existingStyle) {
+						existingCat.styles.push(new Style(defaultStyle));
+					}
+				}
+			}
+		}
 	}
 
 	/**
@@ -701,6 +727,24 @@ export class VideoStyle extends SerializableBase {
 			}
 
 		return videoStyle;
+	}
+
+	/**
+	 * Synchronise tous les styles avec les fichiers JSON par défaut.
+	 * Utile pour ajouter de nouvelles catégories/styles à des projets existants.
+	 */
+	async syncWithDefaultStyles() {
+		// Sync 'global'
+		const defaultGlobal = await (await fetch('./styles/globalStyles.json')).json();
+		this.getStylesOfTarget('global').syncWithDefaultCategories(defaultGlobal);
+
+		// Sync 'arabic' et toutes les traductions (elles partagent le même template styles.json)
+		const defaultStyles = await (await fetch('./styles/styles.json')).json();
+		for (const stylesData of this.styles) {
+			if (stylesData.target !== 'global') {
+				stylesData.syncWithDefaultCategories(defaultStyles);
+			}
+		}
 	}
 
 	/**
